@@ -121,7 +121,7 @@ def process_excel(file_path):
                 if stripped:
                     lines.append(f'<div>{stripped}</div>')
                 else:
-                    lines.append('<br>')
+                    lines.append('<div style="height: 10px;"></div>')
         return ''.join(lines)
 
     def format_class_date(date_val):
@@ -158,8 +158,6 @@ def process_excel(file_path):
             return ""
         
         text = str(cell.value)
-        # Convert \n to <br> for HTML
-        text = text.replace('\n', '<br>')
         
         font = cell.font
         if not font:
@@ -185,10 +183,7 @@ def process_excel(file_path):
     wb = openpyxl.load_workbook(file_path, data_only=True)
     ws_student = wb[student_sheet]
     
-    # Map column names to indices for openpyxl
-    student_headers = [str(cell.value).replace('\n', '').replace(' ', '').strip() for cell in ws_student[df_student_raw.index[find_header_and_build_df(df_student_raw, '분반').index[0] - 1 if not find_header_and_build_df(df_student_raw, '분반').empty else 0] + 1]]
     # Simplified: finding indices in openpyxl for styled columns
-    # We need to find where the header starts in the actual worksheet
     header_row_idx = 1
     for row in ws_student.iter_rows(min_row=1, max_row=20):
         if any('분반' in str(cell.value).replace(' ', '') for cell in row if cell.value):
@@ -216,17 +211,6 @@ def process_excel(file_path):
         excel_row_idx = header_row_idx + row_idx_in_df + 1
         cell = ws_student.cell(row=excel_row_idx, column=col_idx)
         return get_styled_html(cell)
-            
-        # "2024-03-05" 형태 처리
-        if '-' in date_str:
-            try:
-                dt_part = date_str.split(' ')[0]
-                dt = datetime.datetime.strptime(dt_part, '%Y-%m-%d')
-                return f"{dt.month}월 {dt.day}일 수업"
-            except:
-                pass
-        
-        return f"{date_str} 수업"
 
     for i, (_, row) in enumerate(df_merged.iterrows()):
         # Exception Logic Handling
@@ -406,7 +390,7 @@ def process_excel(file_path):
             "obj_q": obj_q if str(obj_q).strip() != '' else "-",
             "subj_q": subj_q if str(subj_q).strip() != '' else "-",
             "difficulty": difficulty_val,
-            "prev_homework_content": raw_prev_hw if raw_prev_hw else "ㅡ",
+            "prev_homework_content": raw_prev_hw.replace('\n', '<br>') if raw_prev_hw else "ㅡ",
         }
         
         reports_data.append(data)
