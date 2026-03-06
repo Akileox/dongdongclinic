@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, initial-scale=1.0">
+  <title>Student Learning Report</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <style>
+    {
+        {
+        inline_css | safe
+      }
+    }
+  </style>
+</head>
+
+<body class="report-body">
+  <div class="report-wrapper">
+    <!-- Background Glow Layers -->
+    <div class="glow-bg top-left"></div>
+    <div class="glow-bg bottom-right"></div>
+
+    <div class="report-content">
+
+      <!-- 1. HERO CARD -->
+      <div class="card hero-card">
+        <div class="hero-top">
+          <div class="brand-logo">TeamDJ</div>
+          <div class="subtitle">학생 학습 리포트</div>
+        </div>
+
+        <div class="hero-body">
+          <div class="student-main">
+            <h1 class="student-name">{{ student_name }}</h1>
+            <span class="badge attendance-badge">{{ attendance }}</span>
+            <div class="school-info">
+              <span class="school">{{ school }}</span>
+              <span class="grade">{{ grade }}학년</span>
+              <span class="class-name">{{ class_name }}</span>
+            </div>
+            <div class="date">{{ date }}</div>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-item">
+              <span class="meta-label">학급 평균</span>
+              <span class="meta-val">{{ class_average }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">결석 사유</span>
+              <span class="meta-val">{{ absence_reason }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">시험 응시</span>
+              <span class="meta-val">{{ test_status }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">과제 상태</span>
+              <span class="meta-val">{{ homework_status }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. KPI SECTION (MOST IMPORTANT) -->
+      <div class="section kpi-section">
+        <h2 class="section-title">오늘의 핵심 지표</h2>
+        <div class="kpi-grid">
+
+          <!-- TEST RESULT -->
+          <div class="card kpi-card">
+            <h3 class="kpi-title">TEST RESULT</h3>
+            <div class="gauge-container">
+              <svg class="arc-gauge" viewBox="0 0 200 200">
+                <defs>
+                  <!-- Light blue -> Electric blue -> Cyan glow -->
+                  <linearGradient id="test-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#89CFF0" />
+                    <stop offset="50%" stop-color="#0066FF" />
+                    <stop offset="100%" stop-color="#00FFFF" />
+                  </linearGradient>
+                  <filter id="glow-fx-test" x="-20%" y="-20%" width="140%" height="140%">
+                    <feGaussianBlur stdDeviation="6" result="blur" />
+                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                  </filter>
+                </defs>
+                <!-- Track arc -->
+                <path class="track" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57" />
+                <!-- Progress arc -->
+                <path class="progress test-progress" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57"
+                  style="--val: {{ test_score }};" stroke="url(#test-grad)" filter="url(#glow-fx-test)" />
+              </svg>
+              <div class="gauge-center">
+                <span class="gauge-num">{{ test_score }}</span><span class="gauge-unit">점</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- HOMEWORK COMPLETION -->
+          <div class="card kpi-card">
+            <h3 class="kpi-title">HOMEWORK COMPLETION</h3>
+            <div class="gauge-container">
+              <svg class="arc-gauge" viewBox="0 0 200 200">
+                <defs>
+                  <!-- Soft gold -> Orange -> Warm pink -->
+                  <linearGradient id="hw-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#FFD700" />
+                    <stop offset="50%" stop-color="#FFA500" />
+                    <stop offset="100%" stop-color="#FF69B4" />
+                  </linearGradient>
+                  <filter id="glow-fx-hw" x="-20%" y="-20%" width="140%" height="140%">
+                    <feGaussianBlur stdDeviation="6" result="blur" />
+                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                  </filter>
+                </defs>
+                <!-- Track arc -->
+                <path class="track" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57" />
+                <!-- Progress arc -->
+                <path class="progress hw-progress" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57"
+                  style="--val: {{ homework_completion }};" stroke="url(#hw-grad)" filter="url(#glow-fx-hw)" />
+              </svg>
+              <div class="gauge-center" {% if not homework_is_percent %}style="font-size: 36px; letter-spacing: -0.5px;"
+                {% endif %}>
+                <span class="gauge-num" {% if not homework_is_percent %}style="font-size: inherit;" {% endif %}>{{
+                  homework_text }}</span>
+                {% if homework_is_percent %}<span class="gauge-unit">%</span>{% endif %}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 3. MAIN LESSON SECTION -->
+      <div class="section lesson-section">
+        <h2 class="section-title">이번 시간 학습 내용</h2>
+        <div class="card lesson-card">
+          <p class="multiline-text">{{ lesson_content }}</p>
+        </div>
+      </div>
+
+      <!-- 4. NOTES SECTION -->
+      <div class="section notes-section">
+        <h2 class="section-title">전달 사항</h2>
+        <div class="notes-stack">
+          <div class="card note-card">
+            <div class="note-label">다음 시간 과제</div>
+            <div class="note-content">{{ next_homework }}</div>
+          </div>
+          <div class="card note-card">
+            <div class="note-label">특이사항</div>
+            <div class="note-content">{{ special_notes }}</div>
+          </div>
+          <div class="card note-card">
+            <div class="note-label">공지사항</div>
+            <div class="note-content">{{ announcements }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. FOOTER -->
+      <div class="footer">
+        ⓒAkileox
+      </div>
+
+    </div>
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Student Learning Report Result</title>
+    <link rel="stylesheet" as="style" crossorigin
+        href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: var(--bg-dark);
+            padding: 50px 0;
+            overflow-x: hidden;
+        }
+
+        .result-container {
+            position: relative;
+            z-index: 10;
+            width: 1200px;
+            display: flex;
+            gap: 50px;
+            align-items: flex-start;
+        }
+
+        .preview-col {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .preview-image {
+            max-width: 100%;
+            height: auto;
+            border-radius: 20px;
+            box-shadow: 0 30px 60px rgba(0, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .preview-image:hover {
+            transform: scale(1.02);
+        }
+
+        .action-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+            padding-top: 50px;
+        }
+
+        .brand-logo {
+            font-size: 50px;
+        }
+
+        .action-box {
+            text-align: left;
+        }
+
+        .success-text {
+            font-size: 24px;
+            color: #00FF80;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .stats-text {
+            font-size: 20px;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+        }
+
+        .btn {
+            background: linear-gradient(90deg, #FFD700, #FF69B4);
+            color: #000;
+            border: none;
+            padding: 16px 40px;
+            font-size: 20px;
+            font-weight: 800;
+            border-radius: 100px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            box-shadow: 0 10px 20px rgba(255, 105, 180, 0.3);
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(255, 105, 180, 0.5);
+            color: #000;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            box-shadow: none;
+            margin-top: 15px;
+            font-weight: 500;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="glow-bg top-left" style="width:100vw; height:100vh; top:-50vh; left:-20vw;"></div>
+
+    <div class="result-container">
+        <div class="preview-col">
+            {% if preview_url %}
+            <img src="{{ preview_url }}" class="preview-image" alt="Generated Report Preview">
+            {% else %}
+            <div style="color:white">미리보기 이미지가 생기지 않았습니다.</div>
+            {% endif %}
+        </div>
+
+        <div class="action-col">
+            <h1 class="brand-logo" style="margin: 0;">TeamDJ</h1>
+
+            <div class="action-box card">
+                <div class="success-text">생성 완료!</div>
+                <div class="stats-text">성공적으로 <strong>{{ total }}명</strong>의 리포트 이미지(.png)가 생성되었습니다.</div>
+
+                <a href="{{ zip_url }}" class="btn" style="width: calc(100% - 80px);">
+                    전체 리포트 압축파일 다운로드 (.zip)
+                </a>
+                <a href="{{ url_for('index') }}" class="btn btn-secondary" style="width: calc(100% - 80px);">
+                    다른 엑셀 파싱하기
+                </a>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

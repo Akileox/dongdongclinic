@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Student Learning Report Generator</title>
+    <link rel="stylesheet" as="style" crossorigin
+        href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* Web App Specific Overrides */
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            margin: 0;
+            background-color: var(--bg-dark);
+            overflow: hidden;
+        }
+
+        .web-container {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            max-width: 600px;
+            padding: 20px;
+        }
+
+        .upload-card {
+            text-align: center;
+            padding: 60px 40px;
+        }
+
+        .upload-box {
+            display: block;
+            border: 2px dashed rgba(255, 255, 255, 0.3);
+            border-radius: 20px;
+            padding: 50px 20px;
+            margin: 30px 0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: rgba(255, 255, 255, 0.02);
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .upload-box:hover {
+            border-color: #00FFFF;
+            background: rgba(0, 255, 255, 0.05);
+        }
+
+        .upload-box p {
+            font-size: 18px;
+            color: var(--text-secondary);
+            margin: 0 0 15px 0;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(90deg, #0066FF, #00FFFF);
+            color: #000;
+            border: none;
+            padding: 16px 40px;
+            font-size: 18px;
+            font-weight: 700;
+            border-radius: 100px;
+            cursor: pointer;
+            transition: opacity 0.3s;
+            width: 100%;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .flash-messages {
+            list-style: none;
+            padding: 0;
+            margin-bottom: 20px;
+        }
+
+        .flash-error {
+            color: #FF6666;
+            background: rgba(255, 102, 102, 0.1);
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 15px;
+        }
+
+        #loader {
+            display: none;
+            margin-top: 20px;
+            color: #00FFFF;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="glow-bg top-left" style="width:100vw; height:100vh; top:-50vh; left:-20vw;"></div>
+
+    <div class="web-container">
+        <div class="card upload-card">
+            <h1 class="brand-logo" style="font-size: 40px; margin-bottom: 10px;">TeamDJ</h1>
+            <div class="subtitle" style="font-size: 20px; margin-bottom: 30px;">학습 리포트 일괄 생성기</div>
+
+            {% with messages = get_flashed_messages(category_filter=["error"]) %}
+            {% if messages %}
+            <ul class="flash-messages">
+                {% for message in messages %}
+                <li class="flash-error">{{ message }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% endwith %}
+
+            <form id="uploadForm" action="{{ url_for('index') }}" method="POST" enctype="multipart/form-data">
+                <label class="upload-box" id="dropZone">
+                    <p>엑셀 파일(.xlsx)을 이곳으로 드래그 하거나 클릭하세요</p>
+                    <p id="fileNameDisplay"
+                        style="color: #fff; font-weight: bold; font-size: 20px; margin-top:20px; display:none;"></p>
+                    <input type="file" name="file" class="file-input" id="fileInput" accept=".xlsx, .xls" required>
+                </label>
+
+                <button type="submit" class="btn" id="submitBtn">리포트 생성 시작</button>
+                <div id="loader">렌더링 중입니다... (약 1분 소요될 수 있습니다)</div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const input = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const display = document.getElementById('fileNameDisplay');
+        const submitBtn = document.getElementById('submitBtn');
+        const loader = document.getElementById('loader');
+
+        input.addEventListener('change', function (e) {
+            if (this.files && this.files.length > 0) {
+                display.style.display = 'block';
+                display.textContent = this.files[0].name;
+            }
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '#00FFFF';
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = 'rgba(255,255,255,0.3)';
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'rgba(255,255,255,0.3)';
+            if (e.dataTransfer.files.length > 0) {
+                input.files = e.dataTransfer.files;
+                display.style.display = 'block';
+                display.textContent = input.files[0].name;
+            }
+        });
+
+        form.addEventListener('submit', () => {
+            submitBtn.style.display = 'none';
+            loader.style.display = 'block';
+        });
+    </script>
+</body>
+
+</html>

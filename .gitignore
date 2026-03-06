@@ -1,0 +1,17 @@
+# Virtual Environments
+myenv/
+venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Local Test Outputs and Inputs (so student data is safe)
+output/
+input/
+
+# IDE files
+.vscode/
+.idea/
