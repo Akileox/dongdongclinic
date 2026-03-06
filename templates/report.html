@@ -27,31 +27,25 @@
 
         <div class="hero-body">
           <div class="student-main">
-            <h1 class="student-name">{{ student_name }}</h1>
-            <span class="badge attendance-badge" data-status="{{ attendance }}">{{ attendance }}</span>
+            <div class="student-header">
+              <h1 class="student-name">{{ student_name }}</h1>
+              <span class="badge attendance-badge" data-status="{{ attendance }}">{{ attendance }}</span>
+            </div>
             <div class="school-info">
               <span class="school">{{ school }}</span>
               <span class="grade">{{ grade }}학년</span>
               <span class="class-name">{{ class_name }}</span>
             </div>
-            <div class="date">{{ date }}</div>
+            <div class="date">{{ date_display }}</div>
           </div>
 
           <div class="meta-grid">
-            <div class="meta-item">
-              <span class="meta-label">학급 평균</span>
-              <span class="meta-val">{{ class_average }}</span>
-            </div>
             <div class="meta-item">
               <span class="meta-label">결석 사유</span>
               <span class="meta-val">{{ absence_reason }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">시험 응시</span>
-              <span class="meta-val">{{ test_status }}</span>
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">과제 상태</span>
+              <span class="meta-label">과제 이행</span>
               <span class="meta-val">{{ homework_status }}</span>
             </div>
           </div>
@@ -95,6 +89,15 @@
                 {% if test_status in ['응시'] %}<span class="gauge-unit">점</span>{% endif %}
               </div>
             </div>
+            {% if test_status in ['응시'] %}
+            <div class="gauge-info-details">
+              전체 문항수: <span class="gauge-info-val">{{ total_q }}</span>,
+              객관식: <span class="gauge-info-val">{{ obj_q }}</span>,
+              주관식: <span class="gauge-info-val">{{ subj_q }}</span><br>
+              난이도: <span class="gauge-info-val">{{ difficulty }}</span> |
+              학급 평균: <span class="gauge-info-val">{{ class_average }}</span>
+            </div>
+            {% endif %}
           </div>
 
           <!-- HOMEWORK COMPLETION -->
@@ -122,12 +125,12 @@
                   style="--val: {{ homework_completion }};" stroke="url(#hw-grad)" filter="url(#glow-fx-hw)" />
               </svg>
               {% endif %}
-              <div class="gauge-center" {% if not homework_is_percent %}style="font-size: 42px; letter-spacing: -0.5px;"
-                {% endif %}>
-                <span class="gauge-num" {% if not homework_is_percent %}style="font-size: inherit;" {% endif %}>{{
-                  homework_text }}</span>
-                {% if homework_is_percent %}<span class="gauge-unit">%</span>{% endif %}
+              <div class="gauge-center">
+                <!-- Gauge center left empty to prioritize text below -->
               </div>
+            </div>
+            <div class="gauge-info-details">
+              과제 이행도: <span class="gauge-info-val">{{ homework_text }}{% if homework_is_percent %}%{% endif %}</span>
             </div>
           </div>
 

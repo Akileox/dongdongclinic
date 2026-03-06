@@ -121,6 +121,44 @@ def process_excel(file_path):
                     lines.append('<br>')
         return ''.join(lines)
 
+    def format_class_date(date_val):
+        if not date_val or str(date_val).lower() == 'nan':
+            return "날짜 미표기"
+        
+        # datetime 객체인 경우
+        if hasattr(date_val, 'strftime'):
+            return f"{date_val.month}월 {date_val.day}일 수업"
+            
+        date_str = str(date_val).strip()
+        
+        # "3/5, 3/6" 형태 처리
+        import re
+        matches = re.findall(r'(\d+)/(\d+)', date_str)
+        if matches:
+            month_map = {}
+            for m, d in matches:
+                if m not in month_map:
+                    month_map[m] = []
+                month_map[m].append(d)
+            
+            result_parts = []
+            for m in month_map:
+                days = ', '.join(month_map[m])
+                result_parts.append(f"{m}월 {days}일")
+            
+            return f"{', '.join(result_parts)} 수업"
+            
+        # "2024-03-05" 형태 처리
+        if '-' in date_str:
+            try:
+                dt_part = date_str.split(' ')[0]
+                dt = datetime.datetime.strptime(dt_part, '%Y-%m-%d')
+                return f"{dt.month}월 {dt.day}일 수업"
+            except:
+                pass
+        
+        return f"{date_str} 수업"
+
     for _, row in df_merged.iterrows():
         # Exception Logic Handling
         test_held_raw = get_val(row, ['테스트실시', '테스트진행', '테스트여부'], False)
@@ -164,6 +202,20 @@ def process_excel(file_path):
                 display_test_percent = 0
             test_status = "응시"
 
+        # 추가 테스트 지표 추출
+        total_q = get_val(row, ['전체문항수', '총문항수'])
+        obj_q = get_val(row, ['객관식문항수', '객관식'])
+        subj_q = get_val(row, ['주관식문항수', '주관식'])
+        difficulty = get_val(row, ['난이도', '테스트난이도'])
+
+        try:
+            if difficulty and str(difficulty).strip() != '' and str(difficulty).lower() != 'nan':
+                difficulty_val = f"{float(difficulty):.2f}"
+            else:
+                difficulty_val = "-"
+        except ValueError:
+            difficulty_val = str(difficulty)
+
         # Absence & Notes
         absence_reason = get_val(row, ['결석사유', '불참사유'])
         if str(absence_reason).strip() == '' or str(absence_reason).lower() == 'nan':
@@ -178,11 +230,15 @@ def process_excel(file_path):
             notice = "별도 공지사항 없습니다."
 
         # Date formatting safely
-        date_raw = get_val(row, ['날짜', '일시'], 'Unknown Date')
+        date_raw = get_val(row, ['날짜', '일시'])
+        date_display = format_class_date(date_raw)
+        
+        # 파일 저장용 date_str (여전히 YYYY-MM-DD 형식이 필요할 수 있으므로)
         if hasattr(date_raw, 'strftime'):
             date_str = date_raw.strftime('%Y-%m-%d')
         else:
-            date_str = str(date_raw).split(' ')[0] # fallback
+            # "3/5, 3/6" 같은 경우 파일 경로에 부적절한 문자가 있을 수 있으므로 정제
+            date_str = str(date_raw).replace('/', '-').replace(',', '').replace(' ', '_')[:20]
 
         # Homework safely convert to int if possible, else keep as text
         hw_raw = get_val(row, ['과제이행도', '과제수행', '숙제'])
@@ -258,6 +314,11 @@ def process_excel(file_path):
             "next_homework": format_bullets(str(get_val(row, '다음시간과제', '')).replace('nan', '')),
             "special_notes": format_bullets(str(special_note).replace('nan', '')),
             "announcements": format_bullets(str(notice).replace('nan', '')),
+            "date_display": date_display,
+            "total_q": total_q if str(total_q).strip() != '' else "-",
+            "obj_q": obj_q if str(obj_q).strip() != '' else "-",
+            "subj_q": subj_q if str(subj_q).strip() != '' else "-",
+            "difficulty": difficulty_val,
         }
         reports_data.append(data)
         
@@ -309,15 +370,17 @@ def generate_images(reports_data, job_id):
             file_url = f"file:///{temp_html_path.replace(os.sep, '/')}"
             page.goto(file_url, wait_until='networkidle')
             
-            # Directory structure: output/JobId/Date/ClassName/StudentName.png
+            # Directory structure: output/JobId/Date/ClassName/StudentName(SchoolGrade).png
             date_dir = os.path.join(job_output_dir, data['date'])
             class_dir = os.path.join(date_dir, data['class_name'])
             os.makedirs(class_dir, exist_ok=True)
             
-            png_filename = f"{data['student_name']}.png"
+            # 학교명에서 '등학교' 제거 및 파일명 구성
+            clean_school = str(data['school']).replace('등학교', '').strip()
+            png_filename = f"{data['student_name']}({clean_school}{data['grade']}).png"
             png_path = os.path.join(class_dir, png_filename)
             
-            # Full_page=True inside snapshot takes dynamic height into account
+            # Full_page=True inside snapshot takes dynamic height into account, use png
             page.screenshot(path=png_path, full_page=True)
             generated_files.append((png_path, data))
             
