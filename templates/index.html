@@ -255,15 +255,8 @@
 
                     if (data.percent === 100) {
                         clearInterval(interval);
-                        statusText.textContent = '생성 완료! 다운로드를 시작합니다.';
-                        window.location.href = `/download_job/${jobId}`;
-
-                        // 다시 시작할 수 있도록 UI 복구 (선택 사항)
-                        setTimeout(() => {
-                            submitBtn.style.display = 'block';
-                            loader.style.display = 'none';
-                            progressBar.style.width = '0%';
-                        }, 5000);
+                        // Redirect to success page
+                        window.location.href = `/success/${jobId}`;
                     }
                 } catch (err) {
                     console.error('Status polling error:', err);
