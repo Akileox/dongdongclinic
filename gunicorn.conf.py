@@ -1,12 +1,11 @@
 # Gunicorn configuration for Render.com (512MB RAM optimization)
 import multiprocessing
 
-# Workers: 4 workers for higher throughput on Paid Plan
-# Paid plan has better CPU resources, allowing more concurrent processes.
-workers = 4
+# Workers: Reduced to 1 to stay within Render Free Tier memory limits (512MB)
+workers = 1
 
-# Threads: 4 threads per worker
-threads = 4
+# Threads: Reduced to 2 to minimize memory overhead
+threads = 2
 
 # Timeout: Set to 1 hour (3600 seconds) for massive batches (100-200 reports)
 timeout = 3600

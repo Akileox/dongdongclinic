@@ -231,11 +231,21 @@
             const interval = setInterval(async () => {
                 try {
                     const response = await fetch(`/status/${jobId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const contentType = response.headers.get("content-type");
+                    if (!contentType || !contentType.includes("application/json")) {
+                        throw new TypeError("Oops, we haven't got JSON!");
+                    }
+
                     const data = await response.json();
 
                     if (data.error) {
                         clearInterval(interval);
-                        alert('작업 중 오류 발생: ' + data.status);
+                        alert('작업 중 오류 발생: ' + (data.status || '알 수 없는 오류'));
                         location.reload();
                         return;
                     }
