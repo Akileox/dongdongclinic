@@ -23,9 +23,21 @@ for d in [INPUT_DIR, OUTPUT_DIR, TEMPLATES_DIR]:
 # Helper function: Excel parser
 def process_excel(file_path):
     try:
+        xls = pd.ExcelFile(file_path)
+        sheet_names = xls.sheet_names
+        
+        if len(sheet_names) < 2:
+            return None, "Excel parsing error: Make sure the excel file has at least 2 sheets."
+            
+        # Determine actual sheets by looking for keywords, else default to index 0 and 1
+        student_sheet = next((s for s in sheet_names if '학생' in s), sheet_names[0])
+        class_sheet = next((s for s in sheet_names if '분반' in s), sheet_names[1])
+        
+        print(f"Loading Student Sheet: {student_sheet}, Class Sheet: {class_sheet}")
+        
         # Read without headers first to find the actual header row
-        df_student_raw = pd.read_excel(file_path, sheet_name=0, header=None)
-        df_class_raw = pd.read_excel(file_path, sheet_name=1, header=None)
+        df_student_raw = pd.read_excel(xls, sheet_name=student_sheet, header=None)
+        df_class_raw = pd.read_excel(xls, sheet_name=class_sheet, header=None)
     except Exception as e:
         return None, f"Excel parsing error: {e}. Make sure the excel file has at least 2 sheets."
 
@@ -206,8 +218,17 @@ def generate_images(reports_data, job_id):
         inline_css = f.read()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        # Using device_scale_factor=2 for crisp high-res UI
+        # Launch Chromium with memory-saving flags for Render.com free tier (512MB RAM)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                '--disable-dev-shm-usage', # Crucial for Docker/Render
+                '--no-sandbox',            # Required for many CI/CD
+                '--disable-setuid-sandbox',
+                '--disable-gpu',           # Saves memory
+                '--single-process'         # Further reduces memory overhead
+            ]
+        )
         page = browser.new_page(
             viewport={"width": 1080, "height": 1560},
             device_scale_factor=2
