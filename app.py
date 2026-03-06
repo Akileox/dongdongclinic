@@ -373,7 +373,7 @@ def generate_images(reports_data, job_id, inline_css, template):
                     '--disable-extensions',
                     '--disable-component-update',
                 ]
-                # Linux-specific memory optimizations (can cause issues on Windows)
+                # Linux-specific memory/perf optimizations (Render)
                 if platform.system() != "Windows":
                     common_args.extend([
                         '--single-process',
