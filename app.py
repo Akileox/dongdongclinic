@@ -363,68 +363,81 @@ def generate_images(reports_data, job_id, inline_css, template):
     
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-gpu',
-                    '--single-process',
-                    '--js-flags="--max-old-space-size=256"',
-                    '--disable-extensions',
-                    '--disable-component-update',
-                    '--no-zygote'
-                ]
-            )
-            context = browser.new_context(
-                viewport={"width": 1080, "height": 1560},
-                device_scale_factor=1.5
-            )
-            page = context.new_page()
-            page.set_default_timeout(300000)
+            def launch_browser():
+                b = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-gpu',
+                        '--single-process',
+                        '--js-flags="--max-old-space-size=256"',
+                        '--disable-extensions',
+                        '--disable-component-update',
+                        '--no-zygote'
+                    ]
+                )
+                c = b.new_context(viewport={"width": 1080, "height": 1560}, device_scale_factor=2.0)
+                pg = c.new_page()
+                pg.set_default_timeout(300000)
+                return b, c, pg
+
+            browser, context, page = launch_browser()
             
             total_reports = len(reports_data)
             for i, data in enumerate(reports_data):
                 progress_store[job_id] = {
-                    "percent": int((i / total_reports) * 90),
+                    "percent": int((i / total_reports) * 95),
                     "status": f"[{i+1}/{total_reports}] 리포트 생성 중: {data['student_name']}..."
                 }
                 
-                # Context restart logic - more aggressive cleaning
-                if i > 0 and i % 20 == 0:
+                # Context restart logic - Re-launch ENTIRE browser every 50 reports to clear memory
+                if i > 0 and i % 50 == 0:
                     try:
                         page.close()
                         context.close()
+                        browser.close()
                     except: pass
                     gc.collect()
-                    time.sleep(1) # Brief pause for CPU cooling
-                    context = browser.new_context(viewport={"width": 1080, "height": 1560}, device_scale_factor=1.5)
-                    page = context.new_page()
-                    page.set_default_timeout(300000)
+                    time.sleep(2) # CPU cooling
+                    browser, context, page = launch_browser()
 
-                html_content = template.render(**data)
-                html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
-                page.set_content(html_content, wait_until='load')
-                
-                date_dir = os.path.join(job_output_dir, data['date'])
-                class_dir = os.path.join(date_dir, data['class_name'])
-                os.makedirs(class_dir, exist_ok=True)
-                
-                clean_school = str(data['school']).replace('등학교', '').strip()
-                png_filename = f"{data['student_name']}({clean_school}{data['grade']}).png"
-                png_path = os.path.join(class_dir, png_filename)
-                
-                page.screenshot(path=png_path, full_page=True)
-                generated_files.append(png_path)
+                try:
+                    html_content = template.render(**data)
+                    html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
+                    page.set_content(html_content, wait_until='load')
+                    
+                    date_dir = os.path.join(job_output_dir, data['date'])
+                    class_dir = os.path.join(date_dir, data['class_name'])
+                    os.makedirs(class_dir, exist_ok=True)
+                    
+                    clean_school = str(data['school']).replace('등학교', '').strip()
+                    png_filename = f"{data['student_name']}({clean_school}{data['grade']}).png"
+                    png_path = os.path.join(class_dir, png_filename)
+                    
+                    page.screenshot(path=png_path, full_page=True)
+                    generated_files.append(png_path)
+                except Exception as e_inner:
+                    # If page fails, try one re-launch
+                    print(f"Error during page render ({data['student_name']}): {e_inner}. Retrying...")
+                    try: browser.close()
+                    except: pass
+                    browser, context, page = launch_browser()
+                    page.set_content(html_content, wait_until='load')
+                    page.screenshot(path=png_path, full_page=True)
+                    generated_files.append(png_path)
+
                 gc.collect()
                 
-            page.close()
-            context.close()
-            browser.close()
+            try:
+                page.close()
+                context.close()
+                browser.close()
+            except: pass
 
         # ZIP creation
-        progress_store[job_id] = {"percent": 90, "status": "압축 파일 생성 중..."}
+        progress_store[job_id] = {"percent": 95, "status": "압축 파일 생성 중..."}
         today_str = datetime.datetime.now().strftime('%Y%m%d')
         zip_filename = f"report_{today_str}_{job_id}.zip"
         zip_path = os.path.join(OUTPUT_DIR, zip_filename)

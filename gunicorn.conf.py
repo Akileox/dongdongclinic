@@ -1,16 +1,15 @@
 # Gunicorn configuration for Render.com (512MB RAM optimization)
 import multiprocessing
 
-# Workers: 1 worker (Crucial for 0.1 vCPU and 512MB RAM environment)
-# Even if user wants parallel, 0.1 CPU shared by 2 workers makes it unusable.
-workers = 1
+# Workers: 4 workers for higher throughput on Paid Plan
+# Paid plan has better CPU resources, allowing more concurrent processes.
+workers = 4
 
-# Threads: Use threads for slightly better concurrency within the single worker
+# Threads: 4 threads per worker
 threads = 4
 
-# Timeout: Set to 10 minutes (600 seconds) to handle large batch processing (100+ reports)
-# Default 30s is too short for long-running image generation tasks
-timeout = 600
+# Timeout: Set to 1 hour (3600 seconds) for massive batches (100-200 reports)
+timeout = 3600
 
 # Worker class: gthread is suitable for I/O bound tasks like image generation
 worker_class = 'gthread'
