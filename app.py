@@ -7,13 +7,16 @@ import threading
 import uuid
 import datetime
 import gc
-import pandas as pd
-from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from jinja2 import Environment, FileSystemLoader
+from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from playwright.sync_api import sync_playwright
+import threading
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_flash_messages'
+
+# Global store for job progress
+progress_store = {}
 
 # Directories setup
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -57,6 +60,11 @@ def process_excel(file_path):
         new_header = df_raw.iloc[header_idx]
         df_clean = df_raw[header_idx+1:].copy()
         df_clean.columns = new_header
+        
+        # Remove any columns that are NaN or unnamed to prevent merge issues
+        df_clean = df_clean.loc[:, df_clean.columns.notna()]
+        df_clean = df_clean.loc[:, ~df_clean.columns.astype(str).str.contains('^Unnamed:')]
+        
         # Reset index
         df_clean.reset_index(drop=True, inplace=True)
         return df_clean
@@ -345,168 +353,158 @@ def process_excel(file_path):
     return reports_data, None
 
 # HTML rendering to PNG
-def generate_images(reports_data, job_id):
-    env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
-    template = env.get_template('report.html')
-    
+def generate_images(reports_data, job_id, inline_css, template):
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
     os.makedirs(job_output_dir, exist_ok=True)
     
     generated_files = []
+    progress_store[job_id] = {"percent": 0, "status": "준비 중..."}
     
-    # Read the CSS file so we can inject it inline and avoid path resolution issues
-    css_path = os.path.join(BASE_DIR, 'static', 'style.css')
-    with open(css_path, 'r', encoding='utf-8') as f:
-        inline_css = f.read()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-gpu',
+                    '--single-process',
+                    '--js-flags="--max-old-space-size=256"',
+                    '--disable-extensions',
+                    '--disable-component-update',
+                    '--no-zygote'
+                ]
+            )
+            context = browser.new_context(
+                viewport={"width": 1080, "height": 1560},
+                device_scale_factor=1.5
+            )
+            page = context.new_page()
+            page.set_default_timeout(300000)
+            
+            total_reports = len(reports_data)
+            for i, data in enumerate(reports_data):
+                progress_store[job_id] = {
+                    "percent": int((i / total_reports) * 90),
+                    "status": f"[{i+1}/{total_reports}] 리포트 생성 중: {data['student_name']}..."
+                }
+                
+                # Context restart logic - more aggressive cleaning
+                if i > 0 and i % 20 == 0:
+                    try:
+                        page.close()
+                        context.close()
+                    except: pass
+                    gc.collect()
+                    time.sleep(1) # Brief pause for CPU cooling
+                    context = browser.new_context(viewport={"width": 1080, "height": 1560}, device_scale_factor=1.5)
+                    page = context.new_page()
+                    page.set_default_timeout(300000)
 
-    with sync_playwright() as p:
-        # Launch Chromium with memory-saving flags for Render.com free tier (512MB RAM)
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                '--disable-dev-shm-usage', # Crucial for Docker/Render
-                '--no-sandbox',            # Required for many CI/CD
-                '--disable-setuid-sandbox',
-                '--disable-gpu',           # Saves memory
-                '--single-process',         # Further reduces memory overhead
-                '--js-flags="--max-old-space-size=256"', # Limit V8 heap memory
-                '--disable-extensions',
-                '--disable-component-update',
-                '--no-zygote'
-            ]
-        )
-        context = browser.new_context(
-            viewport={"width": 1080, "height": 1560},
-            device_scale_factor=1.5 # Adjusted for memory balance
-        )
-        page = context.new_page()
-        page.set_default_timeout(300000)
-        
-        for i, data in enumerate(reports_data):
-            # 20개마다 컨텍스트 재시작 루틴 (메모리 누적 방지)
-            if i > 0 and i % 20 == 0:
-                page.close()
-                context.close()
-                context = browser.new_context(
-                    viewport={"width": 1080, "height": 1560},
-                    device_scale_factor=1.5
-                )
-                page = context.new_page()
-                page.set_default_timeout(300000)
+                html_content = template.render(**data)
+                html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
+                page.set_content(html_content, wait_until='load')
+                
+                date_dir = os.path.join(job_output_dir, data['date'])
+                class_dir = os.path.join(date_dir, data['class_name'])
+                os.makedirs(class_dir, exist_ok=True)
+                
+                clean_school = str(data['school']).replace('등학교', '').strip()
+                png_filename = f"{data['student_name']}({clean_school}{data['grade']}).png"
+                png_path = os.path.join(class_dir, png_filename)
+                
+                page.screenshot(path=png_path, full_page=True)
+                generated_files.append(png_path)
                 gc.collect()
+                
+            page.close()
+            context.close()
+            browser.close()
 
-            html_content = template.render(**data)
-            
-            # Manually inject CSS to safeguard against HTML auto-formatters breaking Jinja syntax
-            html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
-            
-            # Use set_content to avoid temporary file I/O overhead
-            page.set_content(html_content, wait_until='networkidle')
-            
-            # Directory structure: output/JobId/Date/ClassName/StudentName(SchoolGrade).png
-            date_dir = os.path.join(job_output_dir, data['date'])
-            class_dir = os.path.join(date_dir, data['class_name'])
-            os.makedirs(class_dir, exist_ok=True)
-            
-            # 학교명에서 '등학교' 제거 및 파일명 구성
-            clean_school = str(data['school']).replace('등학교', '').strip()
-            png_filename = f"{data['student_name']}({clean_school}{data['grade']}).png"
-            png_path = os.path.join(class_dir, png_filename)
-            
-            # Full_page=True inside snapshot takes dynamic height into account
-            page.screenshot(path=png_path, full_page=True)
-            generated_files.append((png_path, data))
-            
-            # Immediate Garbage Collection to free memory on Render.com free plan
-            gc.collect()
-            
-        page.close()
-        context.close()
-        browser.close()
+        # ZIP creation
+        progress_store[job_id] = {"percent": 90, "status": "압축 파일 생성 중..."}
+        today_str = datetime.datetime.now().strftime('%Y%m%d')
+        zip_filename = f"report_{today_str}_{job_id}.zip"
+        zip_path = os.path.join(OUTPUT_DIR, zip_filename)
         
-    return job_output_dir, generated_files
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, arc_files in os.walk(job_output_dir):
+                for f in arc_files:
+                    abs_file = os.path.join(root, f)
+                    arc_name = os.path.relpath(abs_file, start=job_output_dir)
+                    zipf.write(abs_file, arcname=arc_name)
+        
+        # Immediate cleanup of PNGs
+        if os.path.exists(job_output_dir):
+            shutil.rmtree(job_output_dir)
+            
+        progress_store[job_id] = {"percent": 100, "status": "완료!", "zip": zip_filename}
+        return True
+    except Exception as e:
+        progress_store[job_id] = {"percent": 0, "status": f"오류 발생: {str(e)}", "error": True}
+        return False
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
         if 'file' not in request.files:
-            flash("파일을 첨부해주세요.", "error")
-            return redirect(request.url)
+            return {"error": "파일을 첨부해주세요."}, 400
         
         file = request.files['file']
         if file.filename == '':
-            flash("선택된 파일이 없습니다.", "error")
-            return redirect(request.url)
+            return {"error": "선택된 파일이 없습니다."}, 400
             
-        if not file.filename.endswith(('.xls', '.xlsx')):
-            flash("엑셀 파일(.xlsx)만 업로드 가능합니다.", "error")
-            return redirect(request.url)
-            
-        # Secure saving
         job_id = uuid.uuid4().hex[:8]
         file_path = os.path.join(INPUT_DIR, f"{job_id}_{file.filename}")
         file.save(file_path)
         
         reports_data, err = process_excel(file_path)
         if err:
-            flash(err, "error")
-            return redirect(request.url)
+            if os.path.exists(file_path): os.remove(file_path)
+            return {"error": err}, 400
             
-        # Create Images
-        job_dir, files = generate_images(reports_data, job_id)
-        
-        # Create ZIP
-        today_str = datetime.datetime.now().strftime('%Y%m%d')
-        zip_filename = f"report_{today_str}.zip"
-        zip_path = os.path.join(OUTPUT_DIR, zip_filename)
-        
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Walk directory to maintain Date/Class folder tree in ZIP
-            for root, _, arc_files in os.walk(job_dir):
-                for f in arc_files:
-                    abs_file = os.path.join(root, f)
-                    arc_name = os.path.relpath(abs_file, start=job_dir)
-                    zipf.write(abs_file, arcname=arc_name)
-        
-        # Cleanup function to securely delete files after 5 minutes (300 seconds)
-        def cleanup_files(job_id_to_del, file_path_to_del, job_dir_to_del, zip_path_to_del):
-            time.sleep(300) 
-            # Delete original Excel
-            if os.path.exists(file_path_to_del):
-                os.remove(file_path_to_del)
-            # Delete generated PNGs directory
-            if os.path.exists(job_dir_to_del):
-                shutil.rmtree(job_dir_to_del)
-            # Delete the zip file
-            if os.path.exists(zip_path_to_del):
-                os.remove(zip_path_to_del)
+        # Resources for worker
+        css_path = os.path.join(BASE_DIR, 'static', 'style.css')
+        with open(css_path, 'r', encoding='utf-8') as f:
+            inline_css = f.read()
+        env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
+        template = env.get_template('report.html')
+
+        def worker():
+            try:
+                generate_images(reports_data, job_id, inline_css, template)
+            except Exception as e:
+                progress_store[job_id] = {"percent": 0, "status": f"오류: {str(e)}", "error": True}
                 
-        # Start the background cleanup thread (daemon=True allows server to exit safely)
-        threading.Thread(target=cleanup_files, args=(job_id, file_path, job_dir, zip_path), daemon=True).start()
-        
-        # Select random preview
-        preview_image = None
-        if files:
-            # Copy random image to static folder so browser can serve it easily mapping to static/preview/
-            preview_dir = os.path.join(BASE_DIR, 'static', 'previews')
-            os.makedirs(preview_dir, exist_ok=True)
-            
-            random_file, rand_data = random.choice(files)
-            preview_filename = f"preview_{job_id}.png"
-            preview_dest = os.path.join(preview_dir, preview_filename)
-            shutil.copy(random_file, preview_dest)
-            preview_image = url_for('static', filename=f'previews/{preview_filename}')
-            
-        return render_template('result.html', zip_url=f"/download/{zip_filename}", preview_url=preview_image, total=len(files))
+            # Cleanup after 10 minutes
+            time.sleep(600)
+            if job_id in progress_store:
+                job_info = progress_store.pop(job_id)
+                zip_name = job_info.get('zip')
+                if zip_name:
+                    zpath = os.path.join(OUTPUT_DIR, zip_name)
+                    if os.path.exists(zpath): os.remove(zpath)
+            if os.path.exists(file_path): os.remove(file_path)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"job_id": job_id}, 200
         
     return render_template('index.html')
 
-@app.route('/download/<filename>')
-def download(filename):
-    file_path = os.path.join(OUTPUT_DIR, filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    return "File not found", 404
+@app.route('/status/<job_id>')
+def get_status(job_id):
+    return progress_store.get(job_id, {"percent": 0, "status": "준비 중..."})
+
+@app.route('/download_job/<job_id>')
+def download_job(job_id):
+    info = progress_store.get(job_id)
+    if info and info.get('percent') == 100:
+        zip_name = info['zip']
+        zpath = os.path.join(OUTPUT_DIR, zip_name)
+        if os.path.exists(zpath):
+            return send_file(zpath, as_attachment=True)
+    return "파일이 아직 준비되지 않았거나 만료되었습니다.", 404
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=int(os.environ.get('PORT', 5000)))

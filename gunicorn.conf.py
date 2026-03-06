@@ -1,9 +1,9 @@
 # Gunicorn configuration for Render.com (512MB RAM optimization)
 import multiprocessing
 
-# Workers: 2 workers (Reduced from default to balance parallel load and 512MB RAM limit)
-# The user requested 'half' of original parallel processing.
-workers = 2
+# Workers: 1 worker (Crucial for 0.1 vCPU and 512MB RAM environment)
+# Even if user wants parallel, 0.1 CPU shared by 2 workers makes it unusable.
+workers = 1
 
 # Threads: Use threads for slightly better concurrency within the single worker
 threads = 4
