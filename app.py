@@ -7,6 +7,7 @@ import threading
 import uuid
 import datetime
 import gc
+import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from playwright.sync_api import sync_playwright
