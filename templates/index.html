@@ -231,7 +231,7 @@
             const interval = setInterval(async () => {
                 try {
                     const response = await fetch(`/status/${jobId}`);
-                    
+
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }

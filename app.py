@@ -16,17 +16,32 @@ from playwright.sync_api import sync_playwright
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_flash_messages'
 
-# Global store for job progress
-progress_store = {}
+import json
+from concurrent.futures import ThreadPoolExecutor
 
 # Directories setup
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INPUT_DIR = os.path.join(BASE_DIR, 'input')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 TEMPLATES_DIR = os.path.join(BASE_DIR, 'templates')
+STATUS_DIR = os.path.join(BASE_DIR, 'status')
 
-for d in [INPUT_DIR, OUTPUT_DIR, TEMPLATES_DIR]:
+for d in [INPUT_DIR, OUTPUT_DIR, TEMPLATES_DIR, STATUS_DIR]:
     os.makedirs(d, exist_ok=True)
+
+def save_status(job_id, data):
+    path = os.path.join(STATUS_DIR, f"{job_id}.json")
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
+
+def load_status(job_id):
+    path = os.path.join(STATUS_DIR, f"{job_id}.json")
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except: pass
+    return None
 
 # Helper function: Excel parser
 def process_excel(file_path):
@@ -353,95 +368,63 @@ def process_excel(file_path):
     xls.close()
     return reports_data, None
 
-# HTML rendering to PNG
+# HTML rendering to PNG - Parallel version for high performance
 def generate_images(reports_data, job_id, inline_css, template):
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
     os.makedirs(job_output_dir, exist_ok=True)
     
-    generated_files = []
-    progress_store[job_id] = {"percent": 0, "status": "준비 중..."}
+    save_status(job_id, {"percent": 0, "status": "준비 중..."})
     
-    try:
-        with sync_playwright() as p:
-            def launch_browser():
-                import platform
-                common_args = [
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-gpu',
-                    '--disable-extensions',
-                    '--disable-component-update',
-                ]
-                # Linux-specific memory/perf optimizations (Render)
-                if platform.system() != "Windows":
-                    common_args.extend([
-                        '--single-process',
-                        '--no-zygote',
-                        '--js-flags="--max-old-space-size=256"'
-                    ])
-                
-                b = p.chromium.launch(
-                    headless=True,
-                    args=common_args
-                )
-                c = b.new_context(viewport={"width": 1080, "height": 1560}, device_scale_factor=2.0)
-                pg = c.new_page()
-                pg.set_default_timeout(300000)
-                return b, c, pg
+    total_reports = len(reports_data)
+    completed_count = [0]
+    counter_lock = threading.Lock()
+    first_image_saved = [False]
 
-            browser, context, page = launch_browser()
+    def render_single_report(p, report_data, index):
+        try:
+            browser = p.chromium.launch(headless=True, args=['--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu'])
+            context = browser.new_context(viewport={"width": 1080, "height": 1560}, device_scale_factor=2.0)
+            page = context.new_page()
+            page.set_default_timeout(60000)
+
+            html_content = template.render(**report_data)
+            html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
+            page.set_content(html_content, wait_until='domcontentloaded')
             
-            total_reports = len(reports_data)
+            date_dir = os.path.join(job_output_dir, report_data['date'])
+            class_dir = os.path.join(date_dir, report_data['class_name'])
+            os.makedirs(class_dir, exist_ok=True)
+            
+            clean_school = str(report_data['school']).replace('등학교', '').strip()
+            png_filename = f"{report_data['student_name']}({clean_school}{report_data['grade']}).png"
+            png_path = os.path.join(class_dir, png_filename)
+            
+            page.screenshot(path=png_path, full_page=True)
+            
+            # Save first image as preview
+            with counter_lock:
+                if not first_image_saved[0]:
+                    preview_path = os.path.join(PREVIEW_DIR, f"{job_id}.png")
+                    shutil.copy(png_path, preview_path)
+                    first_image_saved[0] = True
+
+                completed_count[0] += 1
+                current = completed_count[0]
+                save_status(job_id, {
+                    "percent": int((current / total_reports) * 95),
+                    "status": f"[{current}/{total_reports}] 리포트 생성 완료: {report_data['student_name']}"
+                })
+            
+            browser.close()
+        except Exception as e:
+            print(f"Error rendering report {index}: {e}")
+
+    # Parallel processing with max 3 workers for 2GB RAM
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             for i, data in enumerate(reports_data):
-                progress_store[job_id] = {
-                    "percent": int((i / total_reports) * 95),
-                    "status": f"[{i+1}/{total_reports}] 리포트 생성 중: {data['student_name']}..."
-                }
-                
-                # Context restart logic - Re-launch ENTIRE browser every 50 reports to clear memory
-                if i > 0 and i % 50 == 0:
-                    try:
-                        page.close()
-                        context.close()
-                        browser.close()
-                    except: pass
-                    gc.collect()
-                    time.sleep(0.5) # Reduced cooling time for faster batching
-                    browser, context, page = launch_browser()
-
-                try:
-                    html_content = template.render(**data)
-                    html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
-                    page.set_content(html_content, wait_until='domcontentloaded')
-                    
-                    date_dir = os.path.join(job_output_dir, data['date'])
-                    class_dir = os.path.join(date_dir, data['class_name'])
-                    os.makedirs(class_dir, exist_ok=True)
-                    
-                    clean_school = str(data['school']).replace('등학교', '').strip()
-                    png_filename = f"{data['student_name']}({clean_school}{data['grade']}).png"
-                    png_path = os.path.join(class_dir, png_filename)
-                    
-                    page.screenshot(path=png_path, full_page=True)
-                    generated_files.append(png_path)
-                except Exception as e_inner:
-                    # If page fails, try one re-launch
-                    print(f"Error during page render ({data['student_name']}): {e_inner}. Retrying...")
-                    try: browser.close()
-                    except: pass
-                    browser, context, page = launch_browser()
-                    page.set_content(html_content, wait_until='load')
-                    page.screenshot(path=png_path, full_page=True)
-                    generated_files.append(png_path)
-
-                gc.collect()
-                
-            try:
-                page.close()
-                context.close()
-                browser.close()
-            except: pass
+                executor.submit(render_single_report, p, data, i)
 
         # ZIP creation
         progress_store[job_id] = {"percent": 95, "status": "압축 파일 생성 중..."}
@@ -460,10 +443,10 @@ def generate_images(reports_data, job_id, inline_css, template):
         if os.path.exists(job_output_dir):
             shutil.rmtree(job_output_dir)
             
-        progress_store[job_id] = {"percent": 100, "status": "완료!", "zip": zip_filename}
+        save_status(job_id, {"percent": 100, "status": "완료!", "zip": zip_filename})
         return True
     except Exception as e:
-        progress_store[job_id] = {"percent": 0, "status": f"오류 발생: {str(e)}", "error": True}
+        save_status(job_id, {"percent": 0, "status": f"오류 발생: {str(e)}", "error": True})
         return False
 
 @app.route('/', methods=['GET', 'POST'])
@@ -496,17 +479,22 @@ def index():
             try:
                 generate_images(reports_data, job_id, inline_css, template)
             except Exception as e:
-                progress_store[job_id] = {"percent": 0, "status": f"오류: {str(e)}", "error": True}
+                save_status(job_id, {"percent": 0, "status": f"오류: {str(e)}", "error": True})
                 
             # Cleanup after 10 minutes
             time.sleep(600)
-            if job_id in progress_store:
-                job_info = progress_store.pop(job_id)
+            job_info = load_status(job_id)
+            if job_info:
                 zip_name = job_info.get('zip')
                 if zip_name:
                     zpath = os.path.join(OUTPUT_DIR, zip_name)
                     if os.path.exists(zpath): os.remove(zpath)
-            if os.path.exists(file_path): os.remove(file_path)
+            
+            # Delete status and preview
+            for path in [os.path.join(STATUS_DIR, f"{job_id}.json"), os.path.join(PREVIEW_DIR, f"{job_id}.png"), file_path]:
+                if os.path.exists(path):
+                    try: os.remove(path)
+                    except: pass
 
         threading.Thread(target=worker, daemon=True).start()
         return {"job_id": job_id}, 200
@@ -515,15 +503,14 @@ def index():
 
 @app.route('/status/<job_id>')
 def get_status(job_id):
-    info = progress_store.get(job_id)
+    info = load_status(job_id)
     if not info:
         return {"error": "Job not found", "percent": 0}, 404
     return info
 
-
 @app.route('/download_job/<job_id>')
 def download_job(job_id):
-    info = progress_store.get(job_id)
+    info = load_status(job_id)
     if info and info.get('percent') == 100:
         zip_name = info['zip']
         zpath = os.path.join(OUTPUT_DIR, zip_name)
