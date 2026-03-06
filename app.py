@@ -6,6 +6,7 @@ import time
 import threading
 import uuid
 import datetime
+import gc
 import pandas as pd
 from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from jinja2 import Environment, FileSystemLoader
@@ -319,7 +320,16 @@ def process_excel(file_path):
             "obj_q": obj_q if str(obj_q).strip() != '' else "-",
             "subj_q": subj_q if str(subj_q).strip() != '' else "-",
             "difficulty": difficulty_val,
+            "prev_homework_content": str(get_val(row, [
+                '직전과제', '이전과제', '과제내용', '지난과제', '전시간과제', '직전 시간 과제', 
+                '직전시간과제', '전시간 과제', '이전 시간 과제', '지난 시간 과제', '이전 과제 내용', '직전 과제 내용'
+            ], '')).replace('nan', '').strip(),
         }
+        
+        # 필터링: 과제 내용이 상태 텍스트(첫시간 등)와 겹치면 제거하여 'ㅡ'로 표시되게 함
+        if data["prev_homework_content"] in ["첫시간", "미응시", "A", "B", "C", "D"]:
+             data["prev_homework_content"] = ""
+             
         reports_data.append(data)
         
     return reports_data, None
@@ -348,13 +358,20 @@ def generate_images(reports_data, job_id):
                 '--no-sandbox',            # Required for many CI/CD
                 '--disable-setuid-sandbox',
                 '--disable-gpu',           # Saves memory
-                '--single-process'         # Further reduces memory overhead
+                '--single-process',         # Further reduces memory overhead
+                '--js-flags="--max-old-space-size=256"', # Limit V8 heap memory
+                '--disable-extensions',
+                '--disable-component-update',
+                '--no-zygote'
             ]
         )
-        page = browser.new_page(
+        context = browser.new_context(
             viewport={"width": 1080, "height": 1560},
-            device_scale_factor=2
+            device_scale_factor=1.5 # Adjusted for memory balance
         )
+        page = context.new_page()
+        # Set default timeout to 5 minutes (300,000 ms) as requested
+        page.set_default_timeout(300000)
         
         for data in reports_data:
             html_content = template.render(**data)
@@ -362,13 +379,8 @@ def generate_images(reports_data, job_id):
             # Manually inject CSS to safeguard against HTML auto-formatters breaking Jinja syntax
             html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
             
-            temp_html_path = os.path.join(job_output_dir, f"temp_{uuid.uuid4().hex[:6]}.html")
-            
-            with open(temp_html_path, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-                
-            file_url = f"file:///{temp_html_path.replace(os.sep, '/')}"
-            page.goto(file_url, wait_until='networkidle')
+            # Use set_content to avoid temporary file I/O overhead
+            page.set_content(html_content, wait_until='networkidle')
             
             # Directory structure: output/JobId/Date/ClassName/StudentName(SchoolGrade).png
             date_dir = os.path.join(job_output_dir, data['date'])
@@ -380,15 +392,12 @@ def generate_images(reports_data, job_id):
             png_filename = f"{data['student_name']}({clean_school}{data['grade']}).png"
             png_path = os.path.join(class_dir, png_filename)
             
-            # Full_page=True inside snapshot takes dynamic height into account, use png
+            # Full_page=True inside snapshot takes dynamic height into account
             page.screenshot(path=png_path, full_page=True)
             generated_files.append((png_path, data))
             
-            # clean up temp html
-            try:
-                os.remove(temp_html_path)
-            except:
-                pass
+            # Immediate Garbage Collection to free memory on Render.com free plan
+            gc.collect()
             
         browser.close()
         

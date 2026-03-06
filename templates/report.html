@@ -61,8 +61,11 @@
           <div class="card kpi-card">
             <h3 class="kpi-title">테스트 결과</h3>
             <div class="gauge-container">
-              {% if test_status in ['응시'] %}
               <svg class="arc-gauge" viewBox="0 0 200 200">
+                <!-- Track arc always visible -->
+                <path class="track" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57" />
+
+                {% if test_status in ['응시'] %}
                 <defs>
                   <!-- Light blue -> Electric blue -> Cyan glow -->
                   <linearGradient id="test-grad" x1="0%" y1="100%" x2="100%" y2="0%">
@@ -75,13 +78,11 @@
                     <feComposite in="SourceGraphic" in2="blur" operator="over" />
                   </filter>
                 </defs>
-                <!-- Track arc -->
-                <path class="track" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57" />
-                <!-- Progress arc -->
+                <!-- Progress arc only visible if tested -->
                 <path class="progress test-progress" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57"
                   style="--val: {{ test_score_percent }};" stroke="url(#test-grad)" filter="url(#glow-fx-test)" />
+                {% endif %}
               </svg>
-              {% endif %}
               <div class="gauge-center" {% if test_status not in ['응시']
                 %}style="font-size: 42px; letter-spacing: -0.5px;" {% endif %}>
                 <span class="gauge-num" {% if test_status not in ['응시'] %}style="font-size: inherit;" {% endif %}>{{
@@ -104,8 +105,11 @@
           <div class="card kpi-card">
             <h3 class="kpi-title">직전 과제 이행도</h3>
             <div class="gauge-container">
-              {% if homework_is_percent %}
               <svg class="arc-gauge" viewBox="0 0 200 200">
+                <!-- Track arc always visible -->
+                <path class="track" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57" />
+
+                {% if homework_is_percent %}
                 <defs>
                   <!-- Soft gold -> Orange -> Warm pink -->
                   <linearGradient id="hw-grad" x1="0%" y1="100%" x2="100%" y2="0%">
@@ -118,19 +122,20 @@
                     <feComposite in="SourceGraphic" in2="blur" operator="over" />
                   </filter>
                 </defs>
-                <!-- Track arc -->
-                <path class="track" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57" />
-                <!-- Progress arc -->
+                <!-- Progress arc only visible if percent data exists -->
                 <path class="progress hw-progress" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57"
                   style="--val: {{ homework_completion }};" stroke="url(#hw-grad)" filter="url(#glow-fx-hw)" />
+                {% endif %}
               </svg>
-              {% endif %}
-              <div class="gauge-center">
-                <!-- Gauge center left empty to prioritize text below -->
+              <div class="gauge-center" {% if not homework_is_percent %}style="font-size: 42px; letter-spacing: -0.5px;"
+                {% endif %}>
+                <span class="gauge-num" {% if not homework_is_percent %}style="font-size: inherit;" {% endif %}>{{
+                  homework_text }}</span>
+                {% if homework_is_percent %}<span class="gauge-unit">%</span>{% endif %}
               </div>
             </div>
             <div class="gauge-info-details">
-              과제 이행도: <span class="gauge-info-val">{{ homework_text }}{% if homework_is_percent %}%{% endif %}</span>
+              직전 과제: <span class="gauge-info-val">{{ prev_homework_content if prev_homework_content else 'ㅡ' }}</span>
             </div>
           </div>
 
