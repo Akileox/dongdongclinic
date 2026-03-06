@@ -11,7 +11,7 @@ import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from playwright.sync_api import sync_playwright
-import threading
+from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_flash_messages'
@@ -400,13 +400,13 @@ def generate_images(reports_data, job_id, inline_css, template):
                         browser.close()
                     except: pass
                     gc.collect()
-                    time.sleep(2) # CPU cooling
+                    time.sleep(0.5) # Reduced cooling time for faster batching
                     browser, context, page = launch_browser()
 
                 try:
                     html_content = template.render(**data)
                     html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
-                    page.set_content(html_content, wait_until='load')
+                    page.set_content(html_content, wait_until='domcontentloaded')
                     
                     date_dir = os.path.join(job_output_dir, data['date'])
                     class_dir = os.path.join(date_dir, data['class_name'])
