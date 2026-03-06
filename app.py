@@ -364,19 +364,26 @@ def generate_images(reports_data, job_id, inline_css, template):
     try:
         with sync_playwright() as p:
             def launch_browser():
+                import platform
+                common_args = [
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-gpu',
+                    '--disable-extensions',
+                    '--disable-component-update',
+                ]
+                # Linux-specific memory optimizations (can cause issues on Windows)
+                if platform.system() != "Windows":
+                    common_args.extend([
+                        '--single-process',
+                        '--no-zygote',
+                        '--js-flags="--max-old-space-size=256"'
+                    ])
+                
                 b = p.chromium.launch(
                     headless=True,
-                    args=[
-                        '--disable-dev-shm-usage',
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-gpu',
-                        '--single-process',
-                        '--js-flags="--max-old-space-size=256"',
-                        '--disable-extensions',
-                        '--disable-component-update',
-                        '--no-zygote'
-                    ]
+                    args=common_args
                 )
                 c = b.new_context(viewport={"width": 1080, "height": 1560}, device_scale_factor=2.0)
                 pg = c.new_page()
