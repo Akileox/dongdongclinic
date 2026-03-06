@@ -150,6 +150,19 @@ body.report-body {
   margin-bottom: 8px;
 }
 
+.attendance-badge[data-status="결석"] {
+  background: rgba(255, 64, 64, 0.15);
+  color: #FF4040;
+  border: 1px solid rgba(255, 64, 64, 0.3);
+}
+
+.attendance-badge[data-status="지각"],
+.attendance-badge[data-status="조퇴"] {
+  background: rgba(255, 165, 0, 0.15);
+  color: #FFA500;
+  border: 1px solid rgba(255, 165, 0, 0.3);
+}
+
 .school-info {
   display: flex;
   gap: 12px;
@@ -339,4 +352,26 @@ body.report-body {
   font-weight: 500;
   color: rgba(255, 255, 255, 0.3);
   letter-spacing: 2px;
+}
+
+/* Custom Bullet Point Styles */
+.bullet-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.bullet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+  margin-top: 10px;
+  flex-shrink: 0;
+}
+
+.bullet-text {
+  flex: 1;
 }

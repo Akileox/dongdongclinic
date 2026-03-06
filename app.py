@@ -2,7 +2,10 @@ import os
 import shutil
 import zipfile
 import random
+import time
+import threading
 import uuid
+import datetime
 import pandas as pd
 from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from jinja2 import Environment, FileSystemLoader
@@ -86,57 +89,104 @@ def process_excel(file_path):
     
     reports_data = []
     
+    # Robust value extractor that tries multiple keywords and cleans whitespace
+    def get_val(row, keywords, default=''):
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        
+        # 1. Try to find the first column that contains ANY of the keywords
+        for keyword in keywords:
+            col = next((c for c in row.index if keyword in str(c)), None)
+            if col:
+                val = row[col]
+                if pd.isna(val):
+                    return default
+                return val
+        return default
+
+    def format_bullets(text):
+        if not text:
+            return ""
+        lines = []
+        for line in str(text).split('\n'):
+            stripped = line.strip()
+            if stripped.startswith('-'):
+                # remove the first dash and wrap in styled HTML
+                content = stripped[1:].strip()
+                lines.append(f'<div class="bullet-line"><span class="bullet-dot"></span><span class="bullet-text">{content}</span></div>')
+            else:
+                if stripped:
+                    lines.append(f'<div>{stripped}</div>')
+                else:
+                    lines.append('<br>')
+        return ''.join(lines)
+
     for _, row in df_merged.iterrows():
         # Exception Logic Handling
-        test_held_raw = row.get('테스트 실시 여부', False)
-        if pd.isna(test_held_raw) or str(test_held_raw).strip() == '':
+        test_held_raw = get_val(row, ['테스트실시', '테스트진행', '테스트여부'], False)
+        if test_held_raw is False: # fallback if column not found at all
             test_held = False
         else:
             test_held = str(test_held_raw).strip().upper() not in ['FALSE', 'N', 'X', '미실시', '0']
 
-        test_score = row.get('테스트 점수')
+        test_score = get_val(row, ['테스트점수', '시험점수', '결과점수'])
+        test_max = get_val(row, ['만점', '기준점수', '최대점수'])
         
-        # Test Status
+        # Test Status mapping
         if not test_held:
             display_test_score = "미실시"
             display_test_percent = 0
             test_status = "미실시"
-        elif pd.isna(test_score) or str(test_score).strip() == '':
+        elif str(test_score).strip() == '':
             display_test_score = "미응시"
             display_test_percent = 0
             test_status = "미응시"
         else:
             try:
-                display_test_score = int(float(str(test_score).replace('점', '').strip()))
-                display_test_percent = display_test_score
+                # Extract numeric score
+                s_val = str(test_score).replace('점', '').strip()
+                display_test_score = int(float(s_val))
+                
+                # Max Score for Gauge Math (Relative scale)
+                if str(test_max).strip() != '':
+                    m_val = str(test_max).replace('점', '').strip()
+                    max_val = float(m_val)
+                    if max_val > 0:
+                        # Scaling: (Score / Max) * 100
+                        display_test_percent = int((display_test_score / max_val) * 100)
+                    else:
+                        display_test_percent = 0
+                else: 
+                    # Default to 100-base if no max found
+                    display_test_percent = display_test_score 
             except ValueError:
                 display_test_score = str(test_score)
                 display_test_percent = 0
             test_status = "응시"
 
         # Absence & Notes
-        absence_reason = row.get('결석 사유')
-        if pd.isna(absence_reason) or str(absence_reason).strip() == '':
+        absence_reason = get_val(row, ['결석사유', '불참사유'])
+        if str(absence_reason).strip() == '' or str(absence_reason).lower() == 'nan':
             absence_reason = "-"
 
-        special_note = row.get('특이사항 (밀린 과제, 테스트 미응시 사유 등)')
-        if pd.isna(special_note) or str(special_note).strip() == '':
+        special_note = get_val(row, ['특이사항', '기타사항', '비고'])
+        if str(special_note).strip() == '' or str(special_note).lower() == 'nan':
             special_note = "당일 특이사항 없습니다."
 
-        notice = row.get('공지사항')
-        if pd.isna(notice) or str(notice).strip() == '':
+        notice = get_val(row, ['공지사항', '전달사항'])
+        if str(notice).strip() == '' or str(notice).lower() == 'nan':
             notice = "별도 공지사항 없습니다."
 
         # Date formatting safely
-        date_raw = row.get('날짜', 'Unknown Date')
+        date_raw = get_val(row, ['날짜', '일시'], 'Unknown Date')
         if hasattr(date_raw, 'strftime'):
             date_str = date_raw.strftime('%Y-%m-%d')
         else:
-            date_str = str(date_raw)
+            date_str = str(date_raw).split(' ')[0] # fallback
 
         # Homework safely convert to int if possible, else keep as text
-        hw_raw = row.get('과제 이행도')
-        if pd.isna(hw_raw) or str(hw_raw).strip() == '':
+        hw_raw = get_val(row, ['과제이행도', '과제수행', '숙제'])
+        if str(hw_raw).strip() == '' or str(hw_raw).lower() == 'nan':
             hw_completion = 0
             hw_text = "0"
             hw_is_percent = True
@@ -144,7 +194,17 @@ def process_excel(file_path):
         else:
             hw_str = str(hw_raw).strip()
             try:
-                hw_completion = int(float(hw_str.replace('%', '')))
+                # Remove % and convert
+                val_clean = hw_str.replace('%', '')
+                raw_float = float(val_clean)
+                
+                # Handle ratio floats (e.g., 0.78 -> 78%) vs whole numbers (e.g., 78 -> 78%)
+                # If there's no % sign and it's a decimal <= 1.0, treat as ratio
+                if 0 < raw_float <= 1.0 and '%' not in hw_str:
+                     hw_completion = int(round(raw_float * 100))
+                else:
+                     hw_completion = int(raw_float)
+                
                 hw_text = str(hw_completion)
                 hw_is_percent = True
                 hw_status = "완료" if hw_completion >= 100 else "부분 완료" if hw_completion > 0 else "미완료"
@@ -155,8 +215,8 @@ def process_excel(file_path):
                 hw_is_percent = False
                 hw_status = hw_str
 
-        class_avg_raw = row.get('반평균')
-        if pd.isna(class_avg_raw) or str(class_avg_raw).strip() == '':
+        class_avg_raw = get_val(row, '반평균')
+        if pd.isna(class_avg_raw) or str(class_avg_raw).strip() == '' or str(class_avg_raw).lower() == 'nan':
             class_avg = "-"
         else:
             try:
@@ -164,19 +224,20 @@ def process_excel(file_path):
             except ValueError:
                 class_avg = str(class_avg_raw)
 
-        # Data map
-        # Find mapping for dynamic columns
-        def get_val(row, keyword, default=''):
-            col = next((c for c in row.index if keyword in str(c)), None)
-            return row[col] if col else default
+
 
         # Attendance parsing
-        raw_attendance = get_val(row, '출석', '')
-        if pd.isna(raw_attendance) or str(raw_attendance).strip() == '' or str(raw_attendance).lower() == 'nan':
+        raw_attendance = get_val(row, ['출석', '출결', '출석여부'], '출석')
+        if str(raw_attendance).strip() == '' or str(raw_attendance).lower() == 'nan':
             attendance_val = "출석"
         else:
             attendance_val = str(raw_attendance).strip()
-
+        
+        # Debugging print for student mapping (visible in terminal logs)
+        print(f"Mapping Student: {get_val(row, '학생')} | Date: {date_str} | Test: {display_test_score}/{test_max} ({display_test_percent}%) | HW: {hw_text}%")
+        
+        raw_lesson = str(get_val(row, '학습내용', '')).replace('nan', '')
+        
         data = {
             "date": date_str,
             "student_name": str(get_val(row, '학생', 'Unknown')),
@@ -193,10 +254,10 @@ def process_excel(file_path):
             "homework_completion": hw_completion, # for SVG gauge offset
             "homework_text": hw_text,
             "homework_is_percent": hw_is_percent,
-            "lesson_content": str(row.get('학습 내용', '')),
-            "next_homework": str(row.get('다음 시간 과제', '')),
-            "special_notes": str(special_note),
-            "announcements": str(notice),
+            "lesson_content": format_bullets(raw_lesson),
+            "next_homework": format_bullets(str(get_val(row, '다음시간과제', '')).replace('nan', '')),
+            "special_notes": format_bullets(str(special_note).replace('nan', '')),
+            "announcements": format_bullets(str(notice).replace('nan', '')),
         }
         reports_data.append(data)
         
@@ -235,8 +296,11 @@ def generate_images(reports_data, job_id):
         )
         
         for data in reports_data:
-            data['inline_css'] = inline_css
             html_content = template.render(**data)
+            
+            # Manually inject CSS to safeguard against HTML auto-formatters breaking Jinja syntax
+            html_content = html_content.replace('</head>', f'<style>{inline_css}</style></head>')
+            
             temp_html_path = os.path.join(job_output_dir, f"temp_{uuid.uuid4().hex[:6]}.html")
             
             with open(temp_html_path, 'w', encoding='utf-8') as f:
@@ -297,7 +361,8 @@ def index():
         job_dir, files = generate_images(reports_data, job_id)
         
         # Create ZIP
-        zip_filename = f"reports_{job_id}.zip"
+        today_str = datetime.datetime.now().strftime('%Y%m%d')
+        zip_filename = f"report_{today_str}.zip"
         zip_path = os.path.join(OUTPUT_DIR, zip_filename)
         
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -307,6 +372,22 @@ def index():
                     abs_file = os.path.join(root, f)
                     arc_name = os.path.relpath(abs_file, start=job_dir)
                     zipf.write(abs_file, arcname=arc_name)
+        
+        # Cleanup function to securely delete files after 5 minutes (300 seconds)
+        def cleanup_files(job_id_to_del, file_path_to_del, job_dir_to_del, zip_path_to_del):
+            time.sleep(300) 
+            # Delete original Excel
+            if os.path.exists(file_path_to_del):
+                os.remove(file_path_to_del)
+            # Delete generated PNGs directory
+            if os.path.exists(job_dir_to_del):
+                shutil.rmtree(job_dir_to_del)
+            # Delete the zip file
+            if os.path.exists(zip_path_to_del):
+                os.remove(zip_path_to_del)
+                
+        # Start the background cleanup thread (daemon=True allows server to exit safely)
+        threading.Thread(target=cleanup_files, args=(job_id, file_path, job_dir, zip_path), daemon=True).start()
         
         # Select random preview
         preview_image = None

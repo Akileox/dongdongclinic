@@ -7,13 +7,7 @@
   <title>Student Learning Report</title>
   <link rel="stylesheet" as="style" crossorigin
     href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
-  <style>
-    {
-        {
-        inline_css | safe
-      }
-    }
-  </style>
+
 </head>
 
 <body class="report-body">
@@ -34,7 +28,7 @@
         <div class="hero-body">
           <div class="student-main">
             <h1 class="student-name">{{ student_name }}</h1>
-            <span class="badge attendance-badge">{{ attendance }}</span>
+            <span class="badge attendance-badge" data-status="{{ attendance }}">{{ attendance }}</span>
             <div class="school-info">
               <span class="school">{{ school }}</span>
               <span class="grade">{{ grade }}학년</span>
@@ -71,8 +65,9 @@
 
           <!-- TEST RESULT -->
           <div class="card kpi-card">
-            <h3 class="kpi-title">TEST RESULT</h3>
+            <h3 class="kpi-title">테스트 결과</h3>
             <div class="gauge-container">
+              {% if test_status in ['응시'] %}
               <svg class="arc-gauge" viewBox="0 0 200 200">
                 <defs>
                   <!-- Light blue -> Electric blue -> Cyan glow -->
@@ -90,18 +85,23 @@
                 <path class="track" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57" />
                 <!-- Progress arc -->
                 <path class="progress test-progress" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57"
-                  style="--val: {{ test_score }};" stroke="url(#test-grad)" filter="url(#glow-fx-test)" />
+                  style="--val: {{ test_score_percent }};" stroke="url(#test-grad)" filter="url(#glow-fx-test)" />
               </svg>
-              <div class="gauge-center">
-                <span class="gauge-num">{{ test_score }}</span><span class="gauge-unit">점</span>
+              {% endif %}
+              <div class="gauge-center" {% if test_status not in ['응시']
+                %}style="font-size: 42px; letter-spacing: -0.5px;" {% endif %}>
+                <span class="gauge-num" {% if test_status not in ['응시'] %}style="font-size: inherit;" {% endif %}>{{
+                  display_test_score }}</span>
+                {% if test_status in ['응시'] %}<span class="gauge-unit">점</span>{% endif %}
               </div>
             </div>
           </div>
 
           <!-- HOMEWORK COMPLETION -->
           <div class="card kpi-card">
-            <h3 class="kpi-title">HOMEWORK COMPLETION</h3>
+            <h3 class="kpi-title">직전 과제 이행도</h3>
             <div class="gauge-container">
+              {% if homework_is_percent %}
               <svg class="arc-gauge" viewBox="0 0 200 200">
                 <defs>
                   <!-- Soft gold -> Orange -> Warm pink -->
@@ -121,7 +121,8 @@
                 <path class="progress hw-progress" d="M 43.43 156.57 A 80 80 0 1 1 156.57 156.57"
                   style="--val: {{ homework_completion }};" stroke="url(#hw-grad)" filter="url(#glow-fx-hw)" />
               </svg>
-              <div class="gauge-center" {% if not homework_is_percent %}style="font-size: 36px; letter-spacing: -0.5px;"
+              {% endif %}
+              <div class="gauge-center" {% if not homework_is_percent %}style="font-size: 42px; letter-spacing: -0.5px;"
                 {% endif %}>
                 <span class="gauge-num" {% if not homework_is_percent %}style="font-size: inherit;" {% endif %}>{{
                   homework_text }}</span>
@@ -137,7 +138,7 @@
       <div class="section lesson-section">
         <h2 class="section-title">이번 시간 학습 내용</h2>
         <div class="card lesson-card">
-          <p class="multiline-text">{{ lesson_content }}</p>
+          <div class="multiline-text">{{ lesson_content | safe }}</div>
         </div>
       </div>
 
@@ -162,7 +163,7 @@
 
       <!-- 5. FOOTER -->
       <div class="footer">
-        ⓒAkileox
+        ⓒ Designed by SeungMin Lee
       </div>
 
     </div>
