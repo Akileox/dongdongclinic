@@ -11,8 +11,6 @@ import pandas as pd
 from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from jinja2 import Environment, FileSystemLoader
 from playwright.sync_api import sync_playwright
-import openpyxl
-from openpyxl.styles import Color, Font
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_flash_messages'
@@ -152,65 +150,19 @@ def process_excel(file_path):
             return f"{', '.join(result_parts)} 수업"
         return f"{date_str} 수업"
 
-    # Style extraction helper using openpyxl
-    def get_styled_html(cell):
-        if cell.value is None:
-            return ""
-        
-        text = str(cell.value)
-        
-        font = cell.font
-        if not font:
-            return text
-            
-        styles = []
-        # Color processing (Hex ARGB to RGB)
-        if font.color and font.color.rgb and isinstance(font.color.rgb, str):
-            rgb = font.color.rgb
-            if len(rgb) == 8: # ARGB
-                rgb = rgb[2:]
-            styles.append(f"color: #{rgb}")
-        
-        # Underline processing
-        if font.u:
-            styles.append("text-decoration: underline")
-            
-        if styles:
-            return f'<span style="{"; ".join(styles)}">{text}</span>'
-        return text
-
-    # Open with openpyxl to extract styles
-    wb = openpyxl.load_workbook(file_path, data_only=True)
-    ws_student = wb[student_sheet]
-    
-    # Simplified: finding indices in openpyxl for styled columns
-    header_row_idx = 1
-    for row in ws_student.iter_rows(min_row=1, max_row=20):
-        if any('분반' in str(cell.value).replace(' ', '') for cell in row if cell.value):
-            header_row_idx = row[0].row
-            break
-            
-    col_map = {str(cell.value).replace('\n', '').replace(' ', '').strip(): cell.column for cell in ws_student[header_row_idx] if cell.value}
-
-    def get_styled_val(row_idx_in_df, keywords):
+    # 명시적 자원 해제를 위해 openpyxl은 엔진으로만 사용하거나 필요시 close
+    def get_val(row, keywords, default=''):
         if isinstance(keywords, str):
             keywords = [keywords]
         
-        # Find the correct column name from the mapped column names
-        target_col_name = None
         for keyword in keywords:
-            target_col_name = next((c for c in col_map if keyword in c), None)
-            if target_col_name:
-                break
-        
-        if not target_col_name:
-            return None
-            
-        col_idx = col_map[target_col_name]
-        # pandas row index 0 corresponds to openpyxl row (header_row_idx + 1)
-        excel_row_idx = header_row_idx + row_idx_in_df + 1
-        cell = ws_student.cell(row=excel_row_idx, column=col_idx)
-        return get_styled_html(cell)
+            col = next((c for c in row.index if keyword in str(c)), None)
+            if col:
+                val = row[col]
+                if pd.isna(val) or str(val).lower() == 'nan':
+                    return default
+                return str(val).strip()
+        return default
 
     for i, (_, row) in enumerate(df_merged.iterrows()):
         # Exception Logic Handling
@@ -342,28 +294,22 @@ def process_excel(file_path):
         else:
             attendance_val = str(raw_attendance).strip()
         
-        # Styling applied content extraction
         # 1. 오늘의 학습 내용
-        raw_lesson = get_styled_val(i, '학습내용') or str(get_val(row, '학습내용', '')).replace('nan', '')
+        raw_lesson = get_val(row, '학습내용')
         
         # 2. 다음 시간 과제
-        raw_next_hw = get_styled_val(i, '다음시간과제') or str(get_val(row, '다음시간과제', '')).replace('nan', '')
+        raw_next_hw = get_val(row, '다음시간과제')
         
         # 3. 이전 시간 과제 (강력한 필터링 적용)
-        # 키워드 우선순위: '이전시간과제' -> '이전과제' -> '지난과제' 순
-        raw_prev_hw = get_styled_val(i, ['이전시간과제', '이전시간 과제', '이전 과제', '이전과제'])
-        
-        if not raw_prev_hw:
-             # 만약 스타일 추출 실패 시 pandas 열에서 찾음 (수치 데이터 제외 필터링)
-             potential_vals = [
-                 str(get_val(row, k, '')).replace('nan', '').strip() 
-                 for k in ['이전시간과제', '이전시간 과제', '이전 과제', '이전과제', '지난과제', '전시간과제', '지난 시간 과제']
-             ]
-             # 숫자만 있거나 '첫시간' 등 상태 텍스트인 경우 제외
-             for val in potential_vals:
-                 if val and not val.isdigit() and val not in ["첫시간", "미응시", "A", "B", "C", "D"]:
-                     raw_prev_hw = val
-                     break
+        raw_prev_hw = ""
+        # 키워드 우선순위
+        potential_vals = [
+            get_val(row, k) for k in ['이전시간과제', '이전시간 과제', '이전 과제', '이전과제', '지난과제', '전시간과제', '지난 시간 과제']
+        ]
+        for val in potential_vals:
+            if val and not val.isdigit() and val not in ["첫시간", "미응시", "A", "B", "C", "D"]:
+                raw_prev_hw = val
+                break
         
         data = {
             "date": date_str,
@@ -395,6 +341,7 @@ def process_excel(file_path):
         
         reports_data.append(data)
         
+    xls.close()
     return reports_data, None
 
 # HTML rendering to PNG
@@ -433,10 +380,21 @@ def generate_images(reports_data, job_id):
             device_scale_factor=1.5 # Adjusted for memory balance
         )
         page = context.new_page()
-        # Set default timeout to 5 minutes (300,000 ms) as requested
         page.set_default_timeout(300000)
         
-        for data in reports_data:
+        for i, data in enumerate(reports_data):
+            # 20개마다 컨텍스트 재시작 루틴 (메모리 누적 방지)
+            if i > 0 and i % 20 == 0:
+                page.close()
+                context.close()
+                context = browser.new_context(
+                    viewport={"width": 1080, "height": 1560},
+                    device_scale_factor=1.5
+                )
+                page = context.new_page()
+                page.set_default_timeout(300000)
+                gc.collect()
+
             html_content = template.render(**data)
             
             # Manually inject CSS to safeguard against HTML auto-formatters breaking Jinja syntax
@@ -462,6 +420,8 @@ def generate_images(reports_data, job_id):
             # Immediate Garbage Collection to free memory on Render.com free plan
             gc.collect()
             
+        page.close()
+        context.close()
         browser.close()
         
     return job_output_dir, generated_files
