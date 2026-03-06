@@ -103,7 +103,7 @@
 
           <!-- HOMEWORK COMPLETION -->
           <div class="card kpi-card">
-            <h3 class="kpi-title">직전 과제 이행도</h3>
+            <h3 class="kpi-title">이전 시간 과제 이행도</h3>
             <div class="gauge-container">
               <svg class="arc-gauge" viewBox="0 0 200 200">
                 <!-- Track arc always visible -->
@@ -135,7 +135,8 @@
               </div>
             </div>
             <div class="gauge-info-details">
-              직전 과제: <span class="gauge-info-val">{{ prev_homework_content if prev_homework_content else 'ㅡ' }}</span>
+              이전 시간 과제: <span class="gauge-info-val">{{ prev_homework_content | safe if prev_homework_content else 'ㅡ'
+                }}</span>
             </div>
           </div>
 
@@ -156,15 +157,15 @@
         <div class="notes-stack">
           <div class="card note-card">
             <div class="note-label">다음 시간 과제</div>
-            <div class="note-content">{{ next_homework }}</div>
+            <div class="note-content">{{ next_homework | safe }}</div>
           </div>
           <div class="card note-card">
             <div class="note-label">특이사항</div>
-            <div class="note-content">{{ special_notes }}</div>
+            <div class="note-content">{{ special_notes | safe }}</div>
           </div>
           <div class="card note-card">
             <div class="note-label">공지사항</div>
-            <div class="note-content">{{ announcements }}</div>
+            <div class="note-content">{{ announcements | safe }}</div>
           </div>
         </div>
       </div>

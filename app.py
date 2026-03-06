@@ -11,6 +11,8 @@ import pandas as pd
 from flask import Flask, render_template, request, send_file, url_for, flash, redirect
 from jinja2 import Environment, FileSystemLoader
 from playwright.sync_api import sync_playwright
+import openpyxl
+from openpyxl.styles import Color, Font
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_flash_messages'
@@ -148,6 +150,72 @@ def process_excel(file_path):
                 result_parts.append(f"{m}월 {days}일")
             
             return f"{', '.join(result_parts)} 수업"
+        return f"{date_str} 수업"
+
+    # Style extraction helper using openpyxl
+    def get_styled_html(cell):
+        if cell.value is None:
+            return ""
+        
+        text = str(cell.value)
+        # Convert \n to <br> for HTML
+        text = text.replace('\n', '<br>')
+        
+        font = cell.font
+        if not font:
+            return text
+            
+        styles = []
+        # Color processing (Hex ARGB to RGB)
+        if font.color and font.color.rgb and isinstance(font.color.rgb, str):
+            rgb = font.color.rgb
+            if len(rgb) == 8: # ARGB
+                rgb = rgb[2:]
+            styles.append(f"color: #{rgb}")
+        
+        # Underline processing
+        if font.u:
+            styles.append("text-decoration: underline")
+            
+        if styles:
+            return f'<span style="{"; ".join(styles)}">{text}</span>'
+        return text
+
+    # Open with openpyxl to extract styles
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws_student = wb[student_sheet]
+    
+    # Map column names to indices for openpyxl
+    student_headers = [str(cell.value).replace('\n', '').replace(' ', '').strip() for cell in ws_student[df_student_raw.index[find_header_and_build_df(df_student_raw, '분반').index[0] - 1 if not find_header_and_build_df(df_student_raw, '분반').empty else 0] + 1]]
+    # Simplified: finding indices in openpyxl for styled columns
+    # We need to find where the header starts in the actual worksheet
+    header_row_idx = 1
+    for row in ws_student.iter_rows(min_row=1, max_row=20):
+        if any('분반' in str(cell.value).replace(' ', '') for cell in row if cell.value):
+            header_row_idx = row[0].row
+            break
+            
+    col_map = {str(cell.value).replace('\n', '').replace(' ', '').strip(): cell.column for cell in ws_student[header_row_idx] if cell.value}
+
+    def get_styled_val(row_idx_in_df, keywords):
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        
+        # Find the correct column name from the mapped column names
+        target_col_name = None
+        for keyword in keywords:
+            target_col_name = next((c for c in col_map if keyword in c), None)
+            if target_col_name:
+                break
+        
+        if not target_col_name:
+            return None
+            
+        col_idx = col_map[target_col_name]
+        # pandas row index 0 corresponds to openpyxl row (header_row_idx + 1)
+        excel_row_idx = header_row_idx + row_idx_in_df + 1
+        cell = ws_student.cell(row=excel_row_idx, column=col_idx)
+        return get_styled_html(cell)
             
         # "2024-03-05" 형태 처리
         if '-' in date_str:
@@ -160,7 +228,7 @@ def process_excel(file_path):
         
         return f"{date_str} 수업"
 
-    for _, row in df_merged.iterrows():
+    for i, (_, row) in enumerate(df_merged.iterrows()):
         # Exception Logic Handling
         test_held_raw = get_val(row, ['테스트실시', '테스트진행', '테스트여부'], False)
         if test_held_raw is False: # fallback if column not found at all
@@ -290,10 +358,28 @@ def process_excel(file_path):
         else:
             attendance_val = str(raw_attendance).strip()
         
-        # Debugging print for student mapping (visible in terminal logs)
-        print(f"Mapping Student: {get_val(row, '학생')} | Date: {date_str} | Test: {display_test_score}/{test_max} ({display_test_percent}%) | HW: {hw_text}%")
+        # Styling applied content extraction
+        # 1. 오늘의 학습 내용
+        raw_lesson = get_styled_val(i, '학습내용') or str(get_val(row, '학습내용', '')).replace('nan', '')
         
-        raw_lesson = str(get_val(row, '학습내용', '')).replace('nan', '')
+        # 2. 다음 시간 과제
+        raw_next_hw = get_styled_val(i, '다음시간과제') or str(get_val(row, '다음시간과제', '')).replace('nan', '')
+        
+        # 3. 이전 시간 과제 (강력한 필터링 적용)
+        # 키워드 우선순위: '이전시간과제' -> '이전과제' -> '지난과제' 순
+        raw_prev_hw = get_styled_val(i, ['이전시간과제', '이전시간 과제', '이전 과제', '이전과제'])
+        
+        if not raw_prev_hw:
+             # 만약 스타일 추출 실패 시 pandas 열에서 찾음 (수치 데이터 제외 필터링)
+             potential_vals = [
+                 str(get_val(row, k, '')).replace('nan', '').strip() 
+                 for k in ['이전시간과제', '이전시간 과제', '이전 과제', '이전과제', '지난과제', '전시간과제', '지난 시간 과제']
+             ]
+             # 숫자만 있거나 '첫시간' 등 상태 텍스트인 경우 제외
+             for val in potential_vals:
+                 if val and not val.isdigit() and val not in ["첫시간", "미응시", "A", "B", "C", "D"]:
+                     raw_prev_hw = val
+                     break
         
         data = {
             "date": date_str,
@@ -312,7 +398,7 @@ def process_excel(file_path):
             "homework_text": hw_text,
             "homework_is_percent": hw_is_percent,
             "lesson_content": format_bullets(raw_lesson),
-            "next_homework": format_bullets(str(get_val(row, '다음시간과제', '')).replace('nan', '')),
+            "next_homework": format_bullets(raw_next_hw),
             "special_notes": format_bullets(str(special_note).replace('nan', '')),
             "announcements": format_bullets(str(notice).replace('nan', '')),
             "date_display": date_display,
@@ -320,16 +406,9 @@ def process_excel(file_path):
             "obj_q": obj_q if str(obj_q).strip() != '' else "-",
             "subj_q": subj_q if str(subj_q).strip() != '' else "-",
             "difficulty": difficulty_val,
-            "prev_homework_content": str(get_val(row, [
-                '직전과제', '이전과제', '과제내용', '지난과제', '전시간과제', '직전 시간 과제', 
-                '직전시간과제', '전시간 과제', '이전 시간 과제', '지난 시간 과제', '이전 과제 내용', '직전 과제 내용'
-            ], '')).replace('nan', '').strip(),
+            "prev_homework_content": raw_prev_hw if raw_prev_hw else "ㅡ",
         }
         
-        # 필터링: 과제 내용이 상태 텍스트(첫시간 등)와 겹치면 제거하여 'ㅡ'로 표시되게 함
-        if data["prev_homework_content"] in ["첫시간", "미응시", "A", "B", "C", "D"]:
-             data["prev_homework_content"] = ""
-             
         reports_data.append(data)
         
     return reports_data, None
