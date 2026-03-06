@@ -1,0 +1,638 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000000000000000000000000000000000000..8a1434133bb1e04615195954ed699d2385058f16
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,7 @@
++* text=auto eol=lf
++*.py text eol=lf
++*.html text eol=lf
++*.css text eol=lf
++*.md text eol=lf
++*.txt text eol=lf
++requirements.txt text eol=lf
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..b41fc6d63244fd85706dda64d0b90bf365c6e8aa
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,3 @@
++__pycache__/
++*.pyc
++temp_report*.html
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..ed0c67ba5da6d2f7b91230459388470915c48897
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,63 @@
++# TeamDJ 다크 프리미엄 학습 리포트 생성기
++
++Jinja2 템플릿 + HTML/CSS(다크 글래스모피즘) + Playwright 스크린샷으로 **고정 프레임(1080x1560)** 학습 리포트 PNG를 생성합니다.
++
++## 파일 구조
++
++```text
++.
++├── app.py
++├── requirements.txt
++├── templates/
++│   └── report.html
++├── static/
++│   └── style.css
++└── output/
++    └── report_sample_dark.png
++```
++
++## 설치
++
++```bash
++python3 -m venv .venv
++source .venv/bin/activate
++pip install -r requirements.txt
++python -m playwright install chromium
++```
++
++## 실행
++
++```bash
++python app.py
++```
++
++실행 결과:
++
++- `output/report_sample_dark.png`
++
++## 구현 요약
++
++- `normalize_report_data()`에서 표시용 값을 정규화
++  - 테스트 미실시: `미실시`
++  - 테스트 미응시: `미응시`
++  - 평균/결석사유/특이사항/공지 기본값 처리
++- KPI는 SVG arc gauge(트랙 + 네온 그라디언트 progress + glow + 라운드 캡)로 렌더링
++- 출결과 무관하게 `이번 시간 학습 내용` 블록은 항상 렌더링
++- 다크 그라디언트 배경 + 유리 질감 카드 + 고정 레이아웃으로 메시징 공유용 시트 스타일 구성
++
++## Excel 기반 배치 생성으로 확장
++
++현재는 `SAMPLE_DATA`를 사용합니다. Excel 배치 생성 시 아래 흐름으로 확장하면 됩니다.
++
++1. Excel 각 행을 dict로 로딩
++2. `build_context(row)` 호출
++3. `render_html(context)` 후 `render_png(..., output_path)` 반복 호출
++
++예시 스켈레톤:
++
++```python
++for row in rows_from_excel:
++    context = build_context(row)
++    html = render_html(context)
++    render_png(html, Path("output") / f"{row['student_name']}_{row['date']}.png")
++```
+diff --git a/app.py b/app.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..f300b7172a801f394c6b84ad6d0fd52a93b9a1bd
+--- /dev/null
++++ b/app.py
+@@ -0,0 +1,136 @@
++from pathlib import Path
++from typing import Any, Dict
++
++from jinja2 import Environment, FileSystemLoader, select_autoescape
++from playwright.sync_api import sync_playwright
++
++BASE_DIR = Path(__file__).parent
++TEMPLATE_DIR = BASE_DIR / "templates"
++OUTPUT_DIR = BASE_DIR / "output"
++OUTPUT_PATH = OUTPUT_DIR / "report_sample_dark.png"
++
++CANVAS_WIDTH = 1080
++CANVAS_HEIGHT = 1560
++
++SAMPLE_DATA: Dict[str, Any] = {
++    "date": "2025.03.06",
++    "student_name": "류연진",
++    "school": "경북여고",
++    "grade": "1",
++    "class_name": "예비고1 공통수학1",
++    "attendance": "출석",
++    "absence_reason": "",
++    "test_taken": True,
++    "test_score": 84,
++    "class_average": 78,
++    "homework_completion": 68,
++    "homework_status": "부분 완료",
++    "next_homework": "합성함수와 역함수 단원, 난이도 4까지의 문제를 풀어오는 것입니다.",
++    "lesson_content": "당일 진도 합성함수와 역함수 단원 진행하였습니다.\n\n1. 합성함수\n- [기본] 표현(정의), 성립 조건\n- [기본] 합성 순서 교환 불가, 결합 가능\n- [심화] 합성함수의 개수\n- [심화] 합성함수와 방정식\n\n2. 역함수\n- [기본] 표현과 성립요건\n- [기본] 합성함수의 역함수\n- [심화] 항등식과 방정식 해석\n- [심화] 대칭점과 기울기 역수 관계\n\n추가 안내\n- 핵심 개념 설명 후 기본 유형과 응용 유형을 함께 다루었습니다.\n- 다음 시간 전까지 난이도 4까지의 문제를 풀이해 오면 좋습니다.",
++    "notice": "결석 학생에게도 당일 학습 내용과 영상이 동일하게 안내됩니다.",
++    "special_note": "당일 특이사항 없습니다.",
++}
++
++
++def normalize_report_data(raw: Dict[str, Any]) -> Dict[str, Any]:
++    """Normalize display values so later Excel rows can reuse same rendering flow."""
++    normalized = dict(raw)
++
++    test_taken = bool(raw.get("test_taken", False))
++    test_score = raw.get("test_score")
++
++    if not test_taken:
++        normalized["test_label"] = "미실시"
++        normalized["test_numeric"] = 0
++        normalized["test_unit"] = ""
++        normalized["test_support"] = "테스트가 진행되지 않았습니다."
++    elif test_score is None:
++        normalized["test_label"] = "미응시"
++        normalized["test_numeric"] = 0
++        normalized["test_unit"] = ""
++        normalized["test_support"] = "테스트에 응시하지 않았습니다."
++    else:
++        normalized["test_label"] = str(test_score)
++        normalized["test_numeric"] = max(0, min(100, int(test_score)))
++        normalized["test_unit"] = "점"
++        average = raw.get("class_average")
++        normalized["test_support"] = f"반 평균 {average}점" if average is not None else "반 평균 -"
++
++    completion = raw.get("homework_completion")
++    if completion is None:
++        normalized["homework_numeric"] = 0
++        normalized["homework_label"] = "-"
++    else:
++        normalized["homework_numeric"] = max(0, min(100, int(completion)))
++        normalized["homework_label"] = f"{int(completion)}%"
++
++    normalized["class_average_display"] = (
++        f"{raw['class_average']}점" if raw.get("class_average") is not None else "-"
++    )
++    normalized["absence_reason_display"] = raw.get("absence_reason") or "-"
++    normalized["special_note_display"] = raw.get("special_note") or "당일 특이사항 없습니다."
++    normalized["notice_display"] = raw.get("notice") or "별도 공지사항 없습니다."
++
++    attendance = raw.get("attendance", "")
++    normalized["attendance_badge_class"] = {
++        "출석": "is-attend",
++        "결석": "is-absent",
++        "지각": "is-late",
++        "조퇴": "is-early",
++    }.get(attendance, "")
++
++    return normalized
++
++
++def build_context(raw_data: Dict[str, Any]) -> Dict[str, Any]:
++    report = normalize_report_data(raw_data)
++    return {
++        "report": report,
++        "canvas_width": CANVAS_WIDTH,
++        "canvas_height": CANVAS_HEIGHT,
++        "test_progress": report["test_numeric"],
++        "homework_progress": report["homework_numeric"],
++    }
++
++
++def render_html(context: Dict[str, Any]) -> str:
++    env = Environment(
++        loader=FileSystemLoader(TEMPLATE_DIR),
++        autoescape=select_autoescape(["html", "xml"]),
++    )
++    template = env.get_template("report.html")
++    return template.render(**context)
++
++
++def render_png(html: str, output_path: Path) -> None:
++    output_path.parent.mkdir(parents=True, exist_ok=True)
++    html_path = BASE_DIR / "temp_report_dark.html"
++    html_path.write_text(html, encoding="utf-8")
++
++    with sync_playwright() as playwright:
++        browser = playwright.chromium.launch()
++        page = browser.new_page(
++            viewport={"width": CANVAS_WIDTH + 120, "height": CANVAS_HEIGHT + 120},
++            device_scale_factor=2,
++        )
++        page.goto(html_path.resolve().as_uri(), wait_until="domcontentloaded")
++        page.wait_for_load_state("networkidle")
++        page.wait_for_function("document.fonts && document.fonts.status === 'loaded'")
++
++        frame = page.locator("#report-frame")
++        frame.screenshot(path=str(output_path), type="png")
++        browser.close()
++
++    html_path.unlink(missing_ok=True)
++
++
++def generate_sample_report() -> Path:
++    context = build_context(SAMPLE_DATA)
++    html = render_html(context)
++    render_png(html, OUTPUT_PATH)
++    return OUTPUT_PATH
++
++
++if __name__ == "__main__":
++    output_file = generate_sample_report()
++    print(f"Generated report: {output_file}")
+diff --git a/output/.gitkeep b/output/.gitkeep
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/output/report_sample_dark.png b/output/report_sample_dark.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..7af34cfd6a4f6e8c127213a522155696b5c595f2
+GIT binary patch
+literal 7490
+zcmeAS@N?(olHy`uVBq!ia0y~yV6k9eV3Xir0*ZWge1DvQL6+0g#WAGf)|=~|K~aee
+zZh`8aERGu%R!Vj1cDeDI{k|V{%ptUc)xM_RDm0z7yzKkFxATFzU2aYW8eyOXB-~i>
+zG7hYOs=>u@1?mUONr>WQFf0bz3sOUfkq`n^17`%3g;W8>0(*cV0Tv{{Xb5CvU;wGX
+z#pr^`fkFVR2s;B`;7H3&b>nAXQ0T&K*#S1Ur9dSDM+t=?kwJK11;`*`!qC84>%Md?
+z&~F+9q8FY7P@~t{K#Q4t-5@(r&2u9rmE=^1%%afNgujc8SQr>Ok}%Q`JTaj%2&ANh
+z5RgImk`j?A37*KXB&k;SrNFE~rkewP2mZXc2I$B|nE7vwofbPV!#RkMpY>2fYw;qW
+zLs4^JnA}ujx~CLkvH)BSniqgR2&f1-2P`45gcxQR!i{;-@AX;+e||?TZm<_A@PyD1
+z2r4+>`40~Ro|PVCFWz+j7w3SKD43y$Lj*HNarK`976@pm@Jd0*E%8BDsH2pY2`5+d
+zV9!{1k_kM$U}L~)KO8{^%BEncH20+!<$$Tf#Snk}1W!y1+>47WPzsR`@{2!l4{UOU
+zr&}Bh%up1Oo9aCX3X?0fAy(5#Nt*{At%xBhx=_;DioYvNtiwsM54E7dQausf!1=tm
+zh?lnINkgdn(rW74@uc?@&``8O1zVm2hATW@;bUM{ZI~q)mXL<k|Cmyk<-dlN7W>_3
+z$`W|O+r>pCz>H1bMrFg={!_9;F1T&9k_iO%Q}?G8JTwW+2GzxvtmJ^rS>nrZltSS~
+zW8hA9vRj4VS_Ccq(xD}r>i+ZzupGqKCqgZ{F!KnS2+3_E9CZ!6OM<o10XC_~EJ+$}
+z^?UtJ0oJ@U$d3)Fi;Jv)!HKVDu%R)qatL;Ko&rOh&Z*?K+|+x*WXChO4%zT7(DKb+
+zHvBPy+O|W>gTTrNO@t1)veo^mB-MkvLwf2zV8@TlY=f;z#;kyWeM?{$f!r|+c$P;n
+zh#7?d6%Y+K17CiL2SyfYT|{{E<IRB;dw^vE@kKxPVxtOR9|>Phr$@SSc<cTYIABH7
+zNJUHk&>VqUEr8VE5J9USfW@PRjaD#9Dmm?*YC%$9K677cJ%^<DLaC}jPC_5nfe8_+
+zj?VO-k{;Xv{^R?KkbIyAQAb|`jt5o_x#o$h`_mP_fL<BMZ1&^PiaEf6SrW<yP+D7Y
+za77J90{xS_Kdw)qiAkg5S%a){&vWyi$5Zo9KMq>{%H_gtHavYD>{$@0%}9qzX{!5D
+zl0yMoMgtlG$&45|?!lWCUw}b}rI~TyWnktn^4n|=m=_z7-`mIL2@JR6C^j$~uh>N}
+zr&t<JEjA**GXi$=^!`%@6dHk6Y!cz^2Ok3?fl*9mJ-nwb<W?eq7Br3ORg1n;T=;th
+z3;wP66NXZ8p#={-X+s$}5(P*XM2gtv4QBFyi!|(ZPX$KuK$ei8#0IYXu`^I>+8@_e
+glsuLP=JHc~%=cIq-s-hD4Gb*?Pgg&ebxsLQ0EAVXr~m)}
+
+literal 0
+HcmV?d00001
+
+diff --git a/requirements.txt b/requirements.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..79c58f111eeacceb30c8f92d965b6bf30524937a
+--- /dev/null
++++ b/requirements.txt
+@@ -0,0 +1,2 @@
++Jinja2==3.1.4
++playwright==1.51.0
+diff --git a/static/style.css b/static/style.css
+new file mode 100644
+index 0000000000000000000000000000000000000000..195a8a4a08eb22ef62a396d6673bf32e77da13e8
+--- /dev/null
++++ b/static/style.css
+@@ -0,0 +1,192 @@
++:root {
++  --bg0: #05070f;
++  --bg1: #0a1021;
++  --bg2: #141b33;
++  --text-main: #f4f8ff;
++  --text-sub: #aeb8d3;
++  --line: rgba(255, 255, 255, 0.18);
++  --glass: rgba(255, 255, 255, 0.08);
++  --glass-strong: rgba(255, 255, 255, 0.12);
++}
++
++* { box-sizing: border-box; }
++
++html, body {
++  margin: 0;
++  padding: 0;
++  width: 100%;
++  min-height: 100%;
++  font-family: "Pretendard", "SUIT", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
++  color: var(--text-main);
++  background:
++    radial-gradient(500px 380px at 9% 8%, rgba(107, 82, 255, 0.33), transparent 70%),
++    radial-gradient(430px 350px at 88% 18%, rgba(70, 155, 255, 0.30), transparent 70%),
++    radial-gradient(500px 420px at 50% 102%, rgba(255, 119, 199, 0.20), transparent 70%),
++    linear-gradient(150deg, var(--bg0) 0%, var(--bg1) 52%, var(--bg2) 100%);
++}
++
++#report-frame {
++  width: calc(var(--canvas-w) + 120px);
++  min-height: calc(var(--canvas-h) + 120px);
++  margin: 0 auto;
++  padding: 60px;
++  display: flex;
++  justify-content: center;
++  align-items: flex-start;
++}
++
++#report-canvas {
++  width: var(--canvas-w);
++  height: var(--canvas-h);
++  display: grid;
++  grid-template-rows: auto auto 1fr auto auto;
++  gap: 18px;
++}
++
++.glass-card {
++  background: linear-gradient(180deg, var(--glass-strong) 0%, var(--glass) 100%);
++  border: 1px solid var(--line);
++  border-radius: 24px;
++  backdrop-filter: blur(14px);
++  -webkit-backdrop-filter: blur(14px);
++  box-shadow:
++    0 26px 44px rgba(5, 8, 20, 0.45),
++    inset 0 1px 0 rgba(255, 255, 255, 0.14);
++}
++
++.hero {
++  padding: 26px 30px 22px;
++}
++
++.brand-row,
++.student-row {
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++}
++
++.brand { font-size: 32px; font-weight: 800; letter-spacing: 0.2px; }
++.brand-sub { margin: 2px 0 0; color: var(--text-sub); font-size: 15px; }
++.meta-date { font-size: 18px; color: #dbe8ff; font-weight: 600; }
++
++.student-row { margin-top: 16px; }
++.student-name { margin: 0; font-size: 31px; font-weight: 700; }
++.class-name { margin: 6px 0 0; color: var(--text-sub); font-size: 16px; }
++
++.attendance-badge {
++  padding: 9px 18px;
++  border-radius: 999px;
++  border: 1px solid rgba(255, 255, 255, 0.3);
++  background: rgba(255, 255, 255, 0.1);
++  font-size: 15px;
++  font-weight: 700;
++}
++.attendance-badge.is-attend { box-shadow: 0 0 18px rgba(70, 195, 255, 0.35); }
++.attendance-badge.is-absent { box-shadow: 0 0 18px rgba(255, 100, 120, 0.35); }
++.attendance-badge.is-late,
++.attendance-badge.is-early { box-shadow: 0 0 18px rgba(255, 187, 97, 0.35); }
++
++.meta-grid {
++  margin-top: 18px;
++  display: grid;
++  grid-template-columns: repeat(3, 1fr);
++  gap: 11px 18px;
++}
++.meta-grid div { display: grid; gap: 2px; }
++.meta-grid span { color: #9fb0d4; font-size: 13px; }
++.meta-grid strong { font-size: 16px; font-weight: 600; }
++
++.kpi-section {
++  padding: 16px 18px 18px;
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 14px;
++}
++
++.gauge-card {
++  border-radius: 20px;
++  border: 1px solid rgba(255, 255, 255, 0.14);
++  background: rgba(9, 14, 29, 0.56);
++  padding: 14px 14px 12px;
++}
++.gauge-card h2 { margin: 0; font-size: 18px; }
++
++.gauge-wrap {
++  margin-top: 8px;
++  height: 210px;
++  position: relative;
++  display: grid;
++  place-items: center;
++}
++
++.arc-gauge {
++  width: 100%;
++  height: 100%;
++}
++.arc-track,
++.arc-progress {
++  fill: none;
++  stroke-width: 16;
++  stroke-linecap: round;
++}
++.arc-track { stroke: rgba(255, 255, 255, 0.16); }
++
++.gauge-core {
++  position: absolute;
++  width: 146px;
++  height: 146px;
++  border-radius: 50%;
++  background: radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.12), rgba(12, 17, 36, 0.88) 62%);
++  border: 1px solid rgba(255, 255, 255, 0.16);
++  box-shadow: inset 0 0 22px rgba(255, 255, 255, 0.05), 0 16px 26px rgba(0, 0, 0, 0.4);
++  display: grid;
++  place-items: center;
++}
++.value {
++  margin: 0;
++  font-size: 56px;
++  font-weight: 800;
++  line-height: 1;
++}
++.value span {
++  font-size: 22px;
++  margin-left: 3px;
++  color: #d7e7ff;
++  font-weight: 700;
++}
++.kpi-support {
++  margin: 0;
++  text-align: center;
++  color: #d5def5;
++  font-size: 15px;
++}
++
++.lesson {
++  padding: 22px 24px;
++  display: grid;
++  grid-template-rows: auto 1fr;
++  min-height: 0;
++}
++.lesson h2 { margin: 0 0 10px; font-size: 27px; }
++.lesson article {
++  margin: 0;
++  white-space: pre-wrap;
++  line-height: 1.67;
++  font-size: 20px;
++  color: #eff4ff;
++}
++
++.bottom-notes {
++  padding: 14px 18px;
++  display: grid;
++  gap: 10px;
++}
++.note-item h3 { margin: 0 0 3px; font-size: 15px; color: #cfdef8; }
++.note-item p { margin: 0; color: #dde6fa; font-size: 15px; line-height: 1.45; }
++
++footer {
++  text-align: center;
++  font-size: 14px;
++  color: rgba(227, 236, 255, 0.78);
++  letter-spacing: 0.2px;
++}
+diff --git a/templates/report.html b/templates/report.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..aaff7a255310316b2cb9bc1384a156f056ad51ed
+--- /dev/null
++++ b/templates/report.html
+@@ -0,0 +1,154 @@
++<!doctype html>
++<html lang="ko">
++<head>
++  <meta charset="UTF-8" />
++  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++  <title>TeamDJ 학생 학습 리포트</title>
++  <link rel="stylesheet" href="../static/style.css" />
++</head>
++<body>
++  <div id="report-frame" style="--canvas-w: {{ canvas_width }}px; --canvas-h: {{ canvas_height }}px;">
++    <main id="report-canvas">
++      <section class="hero glass-card">
++        <div class="brand-row">
++          <div>
++            <div class="brand">TeamDJ</div>
++            <p class="brand-sub">학생 학습 리포트</p>
++          </div>
++          <div class="meta-date">{{ report.date }}</div>
++        </div>
++
++        <div class="student-row">
++          <div>
++            <p class="student-name">{{ report.student_name }}</p>
++            <p class="class-name">{{ report.class_name }}</p>
++          </div>
++          <span class="attendance-badge {{ report.attendance_badge_class }}">{{ report.attendance }}</span>
++        </div>
++
++        <div class="meta-grid">
++          <div><span>학교</span><strong>{{ report.school }}</strong></div>
++          <div><span>학년</span><strong>{{ report.grade }}학년</strong></div>
++          <div><span>반 평균</span><strong>{{ report.class_average_display }}</strong></div>
++          <div><span>결석 사유</span><strong>{{ report.absence_reason_display }}</strong></div>
++          <div><span>테스트 상태</span><strong>{{ report.test_label }}{{ report.test_unit }}</strong></div>
++          <div><span>과제 상태</span><strong>{{ report.homework_status }}</strong></div>
++        </div>
++      </section>
++
++      <section class="kpi-section glass-card">
++        <article class="gauge-card">
++          <h2>테스트 결과</h2>
++          <div class="gauge-wrap" data-progress="{{ test_progress }}">
++            <svg class="arc-gauge gauge-test" viewBox="0 0 320 220" aria-hidden="true">
++              <defs>
++                <linearGradient id="testArcGradient" x1="0" y1="0" x2="1" y2="1">
++                  <stop offset="0%" stop-color="#8fd0ff" />
++                  <stop offset="38%" stop-color="#3fa4ff" />
++                  <stop offset="70%" stop-color="#1969ff" />
++                  <stop offset="100%" stop-color="#49ebff" />
++                </linearGradient>
++                <filter id="glowBlue" x="-40%" y="-40%" width="180%" height="180%">
++                  <feGaussianBlur stdDeviation="5" result="blur" />
++                  <feMerge>
++                    <feMergeNode in="blur" />
++                    <feMergeNode in="SourceGraphic" />
++                  </feMerge>
++                </filter>
++              </defs>
++              <path class="arc-track" d="" />
++              <path class="arc-progress" d="" stroke="url(#testArcGradient)" filter="url(#glowBlue)" />
++            </svg>
++            <div class="gauge-core">
++              <p class="value">{{ report.test_label }}<span>{{ report.test_unit }}</span></p>
++            </div>
++          </div>
++          <p class="kpi-support">{{ report.test_support }}</p>
++        </article>
++
++        <article class="gauge-card">
++          <h2>과제 수행률</h2>
++          <div class="gauge-wrap" data-progress="{{ homework_progress }}">
++            <svg class="arc-gauge gauge-homework" viewBox="0 0 320 220" aria-hidden="true">
++              <defs>
++                <linearGradient id="homeworkArcGradient" x1="0" y1="0" x2="1" y2="1">
++                  <stop offset="0%" stop-color="#ffe8aa" />
++                  <stop offset="35%" stop-color="#ffc45f" />
++                  <stop offset="68%" stop-color="#ff8f52" />
++                  <stop offset="100%" stop-color="#ff7bb6" />
++                </linearGradient>
++                <filter id="glowWarm" x="-40%" y="-40%" width="180%" height="180%">
++                  <feGaussianBlur stdDeviation="5" result="blur" />
++                  <feMerge>
++                    <feMergeNode in="blur" />
++                    <feMergeNode in="SourceGraphic" />
++                  </feMerge>
++                </filter>
++              </defs>
++              <path class="arc-track" d="" />
++              <path class="arc-progress" d="" stroke="url(#homeworkArcGradient)" filter="url(#glowWarm)" />
++            </svg>
++            <div class="gauge-core">
++              <p class="value">{{ report.homework_label }}</p>
++            </div>
++          </div>
++          <p class="kpi-support">{{ report.homework_status }}</p>
++        </article>
++      </section>
++
++      <section class="lesson glass-card">
++        <h2>이번 시간 학습 내용</h2>
++        <article>{{ report.lesson_content }}</article>
++      </section>
++
++      <section class="bottom-notes glass-card">
++        <div class="note-item">
++          <h3>다음 과제</h3>
++          <p>{{ report.next_homework }}</p>
++        </div>
++        <div class="note-item">
++          <h3>특이사항</h3>
++          <p>{{ report.special_note_display }}</p>
++        </div>
++        <div class="note-item">
++          <h3>공지</h3>
++          <p>{{ report.notice_display }}</p>
++        </div>
++      </section>
++
++      <footer>ⓒAkileox</footer>
++    </main>
++  </div>
++
++  <script>
++    function polarToCartesian(cx, cy, r, angleDeg) {
++      const rad = (angleDeg - 90) * Math.PI / 180;
++      return { x: cx + (r * Math.cos(rad)), y: cy + (r * Math.sin(rad)) };
++    }
++
++    function arcPath(cx, cy, r, startAngle, endAngle) {
++      const start = polarToCartesian(cx, cy, r, endAngle);
++      const end = polarToCartesian(cx, cy, r, startAngle);
++      const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
++      return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`;
++    }
++
++    function drawGauge(card) {
++      const value = Math.max(0, Math.min(100, Number(card.dataset.progress || 0)));
++      const startAngle = 210;
++      const totalSweep = 300;
++      const endTrack = startAngle + totalSweep;
++      const endProgress = startAngle + (totalSweep * (value / 100));
++
++      const svg = card.querySelector('svg');
++      const track = svg.querySelector('.arc-track');
++      const progress = svg.querySelector('.arc-progress');
++
++      track.setAttribute('d', arcPath(160, 160, 112, startAngle, endTrack));
++      progress.setAttribute('d', arcPath(160, 160, 112, startAngle, endProgress));
++    }
++
++    document.querySelectorAll('.gauge-wrap').forEach(drawGauge);
++  </script>
++</body>
++</html>
+ 
+EOF
+)
