@@ -510,8 +510,9 @@ def index():
 def get_status(job_id):
     info = progress_store.get(job_id)
     if not info:
-        return {"percent": 0, "status": "작업 정보를 찾을 수 없습니다. (서버가 재시작되었을 수 있습니다.)", "error": True}, 404
-    return info, 200
+        return {"error": "Job not found", "percent": 0}, 404
+    return info
+
 
 @app.route('/download_job/<job_id>')
 def download_job(job_id):
